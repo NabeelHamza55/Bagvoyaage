@@ -51,9 +51,9 @@
                     <a href="{{ route('home') }}" class="text-gray-700 hover:text-primary-600 px-3 py-2 rounded-md text-sm font-medium transition-colors duration-200">
                         Home
                     </a>
-                    <a href="#" class="text-gray-700 hover:text-primary-600 px-3 py-2 rounded-md text-sm font-medium transition-colors duration-200">
+                    {{-- <a href="#" class="text-gray-700 hover:text-primary-600 px-3 py-2 rounded-md text-sm font-medium transition-colors duration-200">
                         Track Package
-                    </a>
+                    </a> --}}
                     <a href="#" class="text-gray-700 hover:text-primary-600 px-3 py-2 rounded-md text-sm font-medium transition-colors duration-200">
                         Support
                     </a>
@@ -80,9 +80,9 @@
                 <a href="{{ route('home') }}" class="block px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-primary-600 hover:bg-gray-50">
                     Home
                 </a>
-                <a href="#" class="block px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-primary-600 hover:bg-gray-50">
+                {{-- <a href="#" class="block px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-primary-600 hover:bg-gray-50">
                     Track Package
-                </a>
+                </a> --}}
                 <a href="#" class="block px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-primary-600 hover:bg-gray-50">
                     Support
                 </a>
@@ -166,7 +166,7 @@
                     <h3 class="text-lg font-semibold mb-4">Services</h3>
                     <ul class="space-y-2">
                         <li><a href="#" class="text-gray-400 hover:text-white transition-colors duration-200">International Shipping</a></li>
-                        <li><a href="#" class="text-gray-400 hover:text-white transition-colors duration-200">Package Tracking</a></li>
+                        {{-- <li><a href="#" class="text-gray-400 hover:text-white transition-colors duration-200">Package Tracking</a></li> --}}
                         <li><a href="#" class="text-gray-400 hover:text-white transition-colors duration-200">Express Delivery</a></li>
                         <li><a href="#" class="text-gray-400 hover:text-white transition-colors duration-200">Pickup Service</a></li>
                         <li><a href="#" class="text-gray-400 hover:text-white transition-colors duration-200">Insurance</a></li>

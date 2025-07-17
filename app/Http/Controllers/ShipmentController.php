@@ -369,35 +369,103 @@ class ShipmentController extends Controller
                 $shipment->fedex_response = json_encode($response);
                 $shipment->save();
 
-                // If pickup was selected, it's already scheduled in FedExServiceFixed
-                if ($shipment->pickup_type == 'PICKUP' && !$shipment->pickup_scheduled) {
-                    // Set default pickup values if not provided
-                    if (!$shipment->pickup_date) {
-                        $shipment->pickup_date = $shipment->preferred_ship_date->format('Y-m-d');
-                    }
+                // Create shipment tags after successful shipment creation
+                Log::info('Creating shipment tags after successful shipment creation', [
+                    'shipment_id' => $shipment->id,
+                    'tracking_number' => $response['tracking_number'] ?? null
+                ]);
 
-                    if (!$shipment->pickup_ready_time) {
-                        $shipment->pickup_ready_time = '09:00:00';
-                    }
+                $tagResult = $this->fedexService->createShipmentTags($shipment, $response);
 
-                    if (!$shipment->pickup_close_time) {
-                        $shipment->pickup_close_time = '17:00:00';
-                    }
-
-                    $shipment->pickup_scheduled = true;
-                    $shipment->pickup_confirmation = 'AUTO-' . time();
-                    $shipment->status = 'pickup_scheduled';
-                    $shipment->save();
-
-                    Log::info('Pickup automatically scheduled during payment processing', [
+                if ($tagResult['success']) {
+                    Log::info('Shipment tags created successfully', [
                         'shipment_id' => $shipment->id,
-                        'pickup_date' => $shipment->pickup_date,
-                        'pickup_confirmation' => $shipment->pickup_confirmation
+                        'tag_url' => $tagResult['tag_url'] ?? null
                     ]);
 
-                    // Send pickup confirmation email
-                    $notificationService = new \App\Services\NotificationService();
-                    $notificationService->sendPickupScheduled($shipment);
+                    // Update shipment with tag information (store in fedex_response since label_url column doesn't exist)
+                    $currentFedexResponse = json_decode($shipment->fedex_response, true) ?: [];
+                    $currentFedexResponse['label_url'] = $tagResult['tag_url'] ?? null;
+                    $shipment->fedex_response = json_encode($currentFedexResponse);
+                    $shipment->status = 'label_generated';
+                    $shipment->save();
+                } else {
+                    Log::error('Shipment tag creation failed', [
+                        'shipment_id' => $shipment->id,
+                        'error' => $tagResult['message'] ?? 'Unknown error'
+                    ]);
+                }
+
+                // Debug pickup scheduling conditions
+                Log::info('Checking pickup scheduling conditions', [
+                    'shipment_id' => $shipment->id,
+                    'pickup_type' => $shipment->pickup_type,
+                    'pickup_scheduled' => $shipment->pickup_scheduled,
+                    'condition_met' => ($shipment->pickup_type == 'PICKUP' && !$shipment->pickup_scheduled)
+                ]);
+
+                // Reset pickup_scheduled if it was set by old code (AUTO-* or FAILED-* confirmation)
+                if ($shipment->pickup_scheduled && (
+                    str_starts_with($shipment->pickup_confirmation ?? '', 'AUTO-') ||
+                    str_starts_with($shipment->pickup_confirmation ?? '', 'FAILED-') ||
+                    empty($shipment->pickup_confirmation)
+                )) {
+                    Log::info('Resetting pickup_scheduled from old invalid confirmation', [
+                        'shipment_id' => $shipment->id,
+                        'old_confirmation' => $shipment->pickup_confirmation,
+                        'reason' => 'Invalid or missing confirmation number'
+                    ]);
+                    $shipment->pickup_scheduled = false;
+                    $shipment->pickup_confirmation = null;
+                    $shipment->save();
+                }
+
+                // If pickup was selected, schedule it with FedEx API
+                if ($shipment->pickup_type == 'PICKUP' && !$shipment->pickup_scheduled) {
+                    Log::info('✅ PICKUP SCHEDULING CONDITION MET - Calling FedEx API', [
+                        'shipment_id' => $shipment->id,
+                        'pickup_type' => $shipment->pickup_type,
+                        'pickup_scheduled' => $shipment->pickup_scheduled
+                    ]);
+
+                    // Call the actual FedEx pickup API
+                    $pickupResult = $this->fedexService->schedulePickup($shipment);
+
+                    if ($pickupResult['success']) {
+                        // Update shipment with actual FedEx pickup details
+                        $shipment->pickup_scheduled = true;
+                        $shipment->pickup_confirmation = $pickupResult['confirmation_number'] ?? null;
+                        $shipment->pickup_date = $pickupResult['scheduled_date'] ?? $shipment->preferred_ship_date->format('Y-m-d');
+                        $shipment->status = 'pickup_scheduled';
+                        $shipment->save();
+
+                        Log::info('FedEx pickup scheduled successfully after shipment creation', [
+                            'shipment_id' => $shipment->id,
+                            'confirmation_number' => $pickupResult['confirmation_number'],
+                            'scheduled_date' => $pickupResult['scheduled_date'],
+                            'carrier_code' => $pickupResult['carrier_code'] ?? null
+                        ]);
+
+                        // Send pickup confirmation email
+                        $notificationService = new \App\Services\NotificationService();
+                        $notificationService->sendPickupScheduled($shipment);
+                    } else {
+                        Log::error('FedEx pickup scheduling failed after shipment creation', [
+                            'shipment_id' => $shipment->id,
+                            'error' => $pickupResult['message'] ?? 'Unknown error',
+                            'error_code' => $pickupResult['error_code'] ?? null
+                        ]);
+
+                        // Still mark as scheduled but with error note
+                        $shipment->pickup_scheduled = true;
+                        $shipment->pickup_confirmation = 'FAILED-' . time();
+                        // Log the error details since pickup_notes column doesn't exist
+                        Log::error('Pickup scheduling failed - error details', [
+                            'shipment_id' => $shipment->id,
+                            'error' => $pickupResult['message'] ?? 'Unknown error'
+                        ]);
+                        $shipment->save();
+                    }
                 }
 
                 return true;
@@ -704,7 +772,11 @@ class ShipmentController extends Controller
                         'transaction_id' => $captureResult['transaction_id']
                     ]);
 
-                    return $this->processShipmentAfterPayment($shipment);
+                    // Process shipment after payment
+                    $shipmentProcessed = $this->processShipmentAfterPayment($shipment);
+
+                    // Redirect to success page
+                    return redirect()->route('shipment.success', ['shipment' => $shipment]);
                 } else {
                     $transaction->update([
                         'status' => 'failed',

@@ -48,22 +48,22 @@
                     </a>
                 @endif
 
-                @if($shipment->tracking_number)
+                {{-- @if($shipment->tracking_number)
                     <a href="{{ route('shipment.tracking', $shipment) }}" class="bg-green-500 text-white px-6 py-3 rounded-md font-medium hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2">
                         Track Shipment
                     </a>
-                @endif
+                @endif --}}
             </div>
 
             <div class="flex flex-col sm:flex-row gap-4 justify-center">
                 <a href="{{ route('home') }}" class="bg-indigo-600 text-white px-6 py-3 rounded-md font-medium hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2">
                     Ship Another Package
                 </a>
-                @if($shipment->tracking_number)
+                {{-- @if($shipment->tracking_number)
                     <a href="{{ route('shipment.track', $shipment->tracking_number) }}" class="bg-white text-indigo-600 border border-indigo-600 px-6 py-3 rounded-md font-medium hover:bg-indigo-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2">
                         Track This Package
                     </a>
-                @endif
+                @endif --}}
             </div>
         </div>
 
@@ -216,7 +216,7 @@
                     </div>
                 </div>
 
-                <div class="flex items-start">
+                {{-- <div class="flex items-start">
                     <div class="flex-shrink-0 w-6 h-6 bg-indigo-100 rounded-full flex items-center justify-center mr-3 mt-0.5">
                         <span class="text-sm font-medium text-indigo-600">3</span>
                     </div>
@@ -224,7 +224,7 @@
                         <h3 class="font-medium text-gray-900">Track Your Package</h3>
                         <p class="text-sm text-gray-600">Monitor your shipment's progress using the tracking number provided above.</p>
                     </div>
-                </div>
+                </div> --}}
             </div>
         </div>
     </div>
