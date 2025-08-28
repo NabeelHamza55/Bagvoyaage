@@ -30,8 +30,9 @@ Route::get('/shipment/{shipment}/success', [ShipmentController::class, 'success'
 Route::get('/shipment/{shipment}/pickup', [ShipmentController::class, 'showPickupForm'])->name('shipment.pickup.form');
 Route::post('/shipment/{shipment}/pickup', [ShipmentController::class, 'schedulePickup'])->name('shipment.pickup.schedule');
 
-// Label download
+// Label download and view
 Route::get('/shipment/{shipment}/label', [ShipmentController::class, 'downloadLabel'])->name('shipment.label.download');
+Route::get('/shipment/{shipment}/label/view', [ShipmentController::class, 'viewLabel'])->name('shipment.label.view');
 
 // Shipment tracking
 Route::get('/shipment/{shipment}/tracking', [ShipmentController::class, 'trackShipment'])->name('shipment.tracking');

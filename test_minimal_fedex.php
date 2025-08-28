@@ -27,7 +27,8 @@ try {
         'mergeLabelDocOption' => 'LABELS_AND_DOCS',
         'processingOptionType' => 'ALLOW_ASYNCHRONOUS',
         'oneLabelAtATime' => true,
-        'labelResponseOptions' => 'URL_ONLY',
+        'labelResponseOptions' => 'LABEL',
+
         'accountNumber' => [
             'value' => '740561073'
         ],

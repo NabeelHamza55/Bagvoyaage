@@ -43,6 +43,9 @@
                 @endphp
 
                 @if($hasLabel)
+                    <a href="{{ route('shipment.label.view', $shipment) }}" target="_blank" class="bg-green-500 text-white px-6 py-3 rounded-md font-medium hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2">
+                        View Label
+                    </a>
                     <a href="{{ route('shipment.label.download', $shipment) }}" class="bg-blue-500 text-white px-6 py-3 rounded-md font-medium hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">
                         Download Label
                     </a>

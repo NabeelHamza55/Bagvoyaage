@@ -181,7 +181,7 @@ class FedExService
         }
 
         // Sort rates by price (lowest first)
-        usort($rates, function($a, $b) {
+        usort($rates, function ($a, $b) {
             return $a->total_rate <=> $b->total_rate;
         });
 
@@ -252,7 +252,7 @@ class FedExService
 
             // Build payload according to FedEx Ship API documentation
             $payload = [
-                'labelResponseOptions' => 'URL_ONLY',
+                'labelResponseOptions' => 'LABEL',
                 'accountNumber' => [
                     'value' => $this->accountNumber
                 ],

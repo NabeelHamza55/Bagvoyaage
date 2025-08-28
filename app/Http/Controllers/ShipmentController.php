@@ -195,11 +195,11 @@ class ShipmentController extends Controller
                 $errorMessage = 'Package dimensions or weight exceed FedEx limits. Please reduce the size or weight of your package.';
             }
             // Check if it's a rate request type error
-            else if (strpos($e->getMessage(), 'RATEREQUESTTYPE.REQUIRED') !== false) {
+            elseif (strpos($e->getMessage(), 'RATEREQUESTTYPE.REQUIRED') !== false) {
                 $errorMessage = 'There was an issue with the shipping rate request. Please try again.';
             }
             // General API error
-            else if (strpos($e->getMessage(), 'FedX API') !== false) {
+            elseif (strpos($e->getMessage(), 'FedX API') !== false) {
                 $errorMessage = 'FedX shipping service is temporarily unavailable. Please try again later.';
             }
 
@@ -372,37 +372,71 @@ class ShipmentController extends Controller
                 // Create shipment tags after successful shipment creation
                 Log::info('Creating shipment tags after successful shipment creation', [
                     'shipment_id' => $shipment->id,
-                    'tracking_number' => $response['tracking_number'] ?? null
+                    'tracking_number' => $response['tracking_number'] ?? null,
+                    'response_keys' => array_keys($response),
+                    'has_label_url' => !empty($response['label_url']),
+                    'has_base64_pdf' => !empty($response['base64_pdf']),
+                    'has_response_data' => !empty($response['response_data'])
                 ]);
 
                 $tagResult = $this->fedexService->createShipmentTags($shipment, $response);
-
+                Log::info("Tag creation result", [
+                    'shipment_id' => $shipment->id,
+                    'success' => $tagResult['success'] ?? false,
+                    'message' => $tagResult['message'] ?? 'No message',
+                    'has_tag_url' => !empty($tagResult['tag_url']),
+                    'has_label_base64' => !empty($tagResult['label_base64']),
+                    'tag_result_keys' => array_keys($tagResult)
+                ]);
                 if ($tagResult['success']) {
-                    Log::info('Shipment tags created successfully', [
-                        'shipment_id' => $shipment->id,
-                        'tag_url' => $tagResult['tag_url'] ?? null
-                    ]);
+                    $labelUrl    = $tagResult['tag_url'] ?? null;
+                    $labelBase64 = $tagResult['label_base64'] ?? null;
 
-                    // Update shipment with tag information (store in fedex_response since label_url column doesn't exist)
+                    // Default response container
                     $currentFedexResponse = json_decode($shipment->fedex_response, true) ?: [];
-                    $currentFedexResponse['label_url'] = $tagResult['tag_url'] ?? null;
+
+                    if ($labelBase64) {
+                        // FedEx gave base64 PDF/PNG label → save it locally
+                        $filePath = storage_path("app/public/labels/{$shipment->id}.pdf");
+                        file_put_contents($filePath, base64_decode($labelBase64));
+
+                        // Always store a permanent local URL
+                        $currentFedexResponse['label_url'] = asset("storage/labels/{$shipment->id}.pdf");
+                    } elseif ($labelUrl) {
+                        // FedEx gave a direct URL (temporary, but use if no base64)
+                        $currentFedexResponse['label_url'] = $labelUrl;
+                    } else {
+                        // Neither base64 nor url → log an error
+                        Log::error('FedEx did not return label data', [
+                            'shipment_id' => $shipment->id,
+                            'tagResult'   => $tagResult
+                        ]);
+                    }
+
                     $shipment->fedex_response = json_encode($currentFedexResponse);
                     $shipment->status = 'label_generated';
                     $shipment->save();
+
+                    Log::info('Shipment tags created successfully', [
+                        'shipment_id' => $shipment->id,
+                        'label_url'   => $currentFedexResponse['label_url'] ?? null
+                    ]);
+
                 } else {
                     Log::error('Shipment tag creation failed', [
                         'shipment_id' => $shipment->id,
-                        'error' => $tagResult['message'] ?? 'Unknown error'
+                        'error'       => $tagResult['message'] ?? 'Unknown error'
                     ]);
                 }
 
                 // Debug pickup scheduling conditions
                 Log::info('Checking pickup scheduling conditions', [
-                    'shipment_id' => $shipment->id,
-                    'pickup_type' => $shipment->pickup_type,
+                    'shipment_id'      => $shipment->id,
+                    'pickup_type'      => $shipment->pickup_type,
                     'pickup_scheduled' => $shipment->pickup_scheduled,
-                    'condition_met' => ($shipment->pickup_type == 'PICKUP' && !$shipment->pickup_scheduled)
+                    'condition_met'    => ($shipment->pickup_type == 'PICKUP' && !$shipment->pickup_scheduled)
                 ]);
+
 
                 // Reset pickup_scheduled if it was set by old code (AUTO-* or FAILED-* confirmation)
                 if ($shipment->pickup_scheduled && (
@@ -639,6 +673,42 @@ class ShipmentController extends Controller
     }
 
     /**
+     * View shipping label in browser
+     */
+    public function viewLabel(Shipment $shipment)
+    {
+        try {
+            // Get FedEx response data
+            $fedexResponse = json_decode($shipment->fedex_response, true);
+
+            if (!$fedexResponse || !isset($fedexResponse['label_url'])) {
+                return redirect()->back()->withErrors(['error' => 'Shipping label not available']);
+            }
+
+            $labelUrl = $fedexResponse['label_url'];
+
+            // Get the label content
+            $labelContent = file_get_contents($labelUrl);
+
+            if ($labelContent === false) {
+                return redirect()->back()->withErrors(['error' => 'Unable to load shipping label']);
+            }
+
+            return response($labelContent)
+                ->header('Content-Type', 'application/pdf')
+                ->header('Content-Disposition', 'inline; filename="shipping-label-' . $shipment->tracking_number . '.pdf"');
+
+        } catch (\Exception $e) {
+            Log::error('Label view error', [
+                'shipment_id' => $shipment->id,
+                'exception' => $e->getMessage()
+            ]);
+
+            return redirect()->back()->withErrors(['error' => 'Error viewing label: ' . $e->getMessage()]);
+        }
+    }
+
+    /**
      * Track shipment with FedEx API
      */
     public function trackShipment(Shipment $shipment)
@@ -790,7 +860,7 @@ class ShipmentController extends Controller
 
                     return redirect()->route('shipment.checkout', $shipment)->withErrors(['error' => 'Payment failed: ' . ($captureResult['message'] ?? 'Unknown error')]);
                 }
-            } else if ($transaction->status === 'completed') {
+            } elseif ($transaction->status === 'completed') {
                 // Payment was already completed, just show success page
                 Log::info('Payment already completed, showing success page', [
                     'shipment_id' => $shipment->id

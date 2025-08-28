@@ -112,7 +112,7 @@ class FedExServiceFixed
                 'mergeLabelDocOption' => 'LABELS_AND_DOCS',
                 'processingOptionType' => 'ALLOW_ASYNCHRONOUS',
                 'oneLabelAtATime' => true,
-                'labelResponseOptions' => 'URL_ONLY',
+                'labelResponseOptions' => 'LABEL',
                 'accountNumber' => [
                     'value' => $this->accountNumber
                 ],
@@ -243,13 +243,14 @@ class FedExServiceFixed
             ]);
 
             // Remove any null or empty fields recursively
-            function array_filter_recursive($input) {
+            function array_filter_recursive($input)
+            {
                 foreach ($input as &$value) {
                     if (is_array($value)) {
                         $value = array_filter_recursive($value);
                     }
                 }
-                return array_filter($input, function($v) {
+                return array_filter($input, function ($v) {
                     return !is_null($v) && $v !== '';
                 });
             }
@@ -263,8 +264,16 @@ class FedExServiceFixed
 
             if ($response->successful()) {
                 $data = $response->json();
+                log::info("fedex response", $data);
                 $trackingNumber = $data['output']['transactionShipments'][0]['pieceResponses'][0]['trackingNumber'] ?? null;
-                $labelUrl = $data['output']['transactionShipments'][0]['pieceResponses'][0]['packageDocuments'][0]['url'] ?? null;
+                $pieceResponse = $data['output']['transactionShipments'][0]['pieceResponses'][0] ?? null;
+
+                $packageDocs = $pieceResponse['packageDocuments'][0] ?? null;
+                $labelUrl = $packageDocs['url'] ?? null;
+                $documentId = $packageDocs['documentId'] ?? null;
+                $documentType = $packageDocs['contentType'] ?? null; // e.g. "LABEL"
+                $documentEncoding = $packageDocs['encodedLabel'] ?? null; // base64 encoded PDF
+
                 $masterTrackingNumber = $data['output']['transactionShipments'][0]['masterTrackingNumber'] ?? $trackingNumber;
 
                 // Log successful response
@@ -272,18 +281,25 @@ class FedExServiceFixed
                     'shipment_id' => $shipment->id,
                     'tracking_number' => $trackingNumber,
                     'master_tracking_number' => $masterTrackingNumber,
-                    'has_label' => !empty($labelUrl)
+                    'has_label_url' => !empty($labelUrl),
+                    'has_document_id' => !empty($documentId),
+                    'document_type' => $documentType,
+                    'document_encoding' => !empty($documentEncoding) ? 'base64' : 'none'
                 ]);
 
                 return [
                     'success' => true,
                     'tracking_number' => $trackingNumber,
                     'master_tracking_number' => $masterTrackingNumber,
-                    'label_url' => $labelUrl,
+                    'label_url' => $labelUrl,              // direct link (if available)
+                    'document_id' => $documentId,          // use with Tags API to fetch later
+                    'document_type' => $documentType,      // useful to confirm PDF type
+                    'base64_pdf' => $documentEncoding,     // if FedEx returns encoded PDF
                     'message' => 'Shipment created successfully',
                     'response_data' => $data
                 ];
             }
+
 
             $errorBody = $response->body();
             Log::error('FedEx Shipment API Error', [
@@ -594,7 +610,7 @@ class FedExServiceFixed
         }
     }
 
-        /**
+    /**
      * Test FedEx API connection
      */
     public function testFedExConnection(): array
@@ -983,15 +999,33 @@ class FedExServiceFixed
         try {
             Log::info('Creating FedEx shipment tags', [
                 'shipment_id' => $shipment->id,
-                'tracking_number' => $shipmentResponse['tracking_number'] ?? null
+                'tracking_number' => $shipmentResponse['tracking_number'] ?? null,
+                'has_label_url' => !empty($shipmentResponse['label_url']),
+                'has_base64_pdf' => !empty($shipmentResponse['base64_pdf']),
+                'response_keys' => array_keys($shipmentResponse)
             ]);
 
-            // Use the label URL from the shipment creation response instead of separate tag API
-            // The shipment creation already generates the label with URL_ONLY option
             $labelUrl = $shipmentResponse['label_url'] ?? null;
 
+            // Extract base64 PDF from the response data
+            $labelBase64 = null;
+            if (isset($shipmentResponse['response_data']['output']['transactionShipments'][0]['pieceResponses'][0]['packageDocuments'][0]['encodedLabel'])) {
+                $labelBase64 = $shipmentResponse['response_data']['output']['transactionShipments'][0]['pieceResponses'][0]['packageDocuments'][0]['encodedLabel'];
+                Log::info('Found base64 PDF in response_data path', [
+                    'shipment_id' => $shipment->id,
+                    'base64_length' => strlen($labelBase64)
+                ]);
+            } elseif (isset($shipmentResponse['base64_pdf'])) {
+                $labelBase64 = $shipmentResponse['base64_pdf'];
+                Log::info('Found base64 PDF in base64_pdf field', [
+                    'shipment_id' => $shipment->id,
+                    'base64_length' => strlen($labelBase64)
+                ]);
+            }
+
             if ($labelUrl) {
-                Log::info('=== FEDEX TAG CREATION SUCCESS (using shipment label) ===', [
+                // Case 1: FedEx gave us a direct URL
+                Log::info('=== FEDEX TAG CREATION SUCCESS (using label URL) ===', [
                     'shipment_id' => $shipment->id,
                     'label_url' => $labelUrl
                 ]);
@@ -999,22 +1033,45 @@ class FedExServiceFixed
                 return [
                     'success' => true,
                     'tag_url' => $labelUrl,
-                    'message' => 'Shipment label available from shipment creation',
+                    'message' => 'Shipment label available from shipment creation (URL)',
                     'response_data' => ['label_url' => $labelUrl]
+                ];
+            } elseif ($labelBase64) {
+                // Case 2: FedEx gave us raw Base64 label
+                $labelsDir = storage_path("app/public/labels");
+                if (!file_exists($labelsDir)) {
+                    mkdir($labelsDir, 0755, true);
+                }
+
+                $filePath = $labelsDir . "/{$shipment->id}.pdf";
+                file_put_contents($filePath, base64_decode($labelBase64));
+
+                $publicUrl = asset("storage/labels/{$shipment->id}.pdf");
+
+                Log::info('=== FEDEX TAG CREATION SUCCESS (using base64 label) ===', [
+                    'shipment_id' => $shipment->id,
+                    'local_label_url' => $publicUrl
+                ]);
+
+                return [
+                    'success' => true,
+                    'tag_url' => $publicUrl,
+                    'label_base64' => $labelBase64, // Also return the base64 for the controller
+                    'message' => 'Shipment label generated from base64',
+                    'response_data' => ['local_file' => $filePath]
                 ];
             }
 
-            Log::warning('No label URL found in shipment response', [
+            Log::warning('No label data found in shipment response', [
                 'shipment_id' => $shipment->id,
                 'shipment_response_keys' => array_keys($shipmentResponse)
             ]);
 
             return [
                 'success' => false,
-                'message' => 'No label URL found in shipment response',
+                'message' => 'No label data found in shipment response',
                 'error_code' => 'TAG_CREATION_ERROR'
             ];
-
         } catch (\Exception $e) {
             Log::error('FedEx Tag Creation Error', [
                 'shipment_id' => $shipment->id,
@@ -1028,6 +1085,8 @@ class FedExServiceFixed
             ];
         }
     }
+
+
 
     /**
      * Get available states for FedEx shipping
@@ -1216,7 +1275,7 @@ class FedExServiceFixed
         }
 
         // Sort rates by price (lowest first)
-        usort($rates, function($a, $b) {
+        usort($rates, function ($a, $b) {
             return $a->total_rate <=> $b->total_rate;
         });
 
