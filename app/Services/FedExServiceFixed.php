@@ -757,10 +757,10 @@ class FedExServiceFixed
     private function mapDeliveryTypeToService(string $deliveryType): string
     {
         return match($deliveryType) {
-            'standard' => 'FEDEX_2_DAY', // Changed from FEDEX_GROUND to FEDEX_2_DAY for better reliability
+            'standard' => 'FEDEX_GROUND',
             'express' => 'FEDEX_2_DAY',
             'overnight' => 'PRIORITY_OVERNIGHT',
-            default => 'FEDEX_2_DAY'
+            default => 'FEDEX_GROUND'
         };
     }
 
