@@ -632,8 +632,8 @@ class FedExService
     {
         return match($deliveryType) {
             'standard' => 'FEDEX_GROUND',
-            'express' => 'FEDEX_EXPRESS_SAVER',
-            'overnight' => 'FEDEX_STANDARD_OVERNIGHT',
+            'express' => 'FEDEX_2_DAY',
+            'overnight' => 'PRIORITY_OVERNIGHT',
             default => 'FEDEX_GROUND',
         };
     }
