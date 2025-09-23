@@ -52,29 +52,63 @@
             <!-- Shipping Rates -->
             <div class="lg:col-span-2">
                 @if($rates && count($rates) > 0)
+                    <!-- Delivery Type Preference Header -->
+                    <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center">
+                                <div class="flex-shrink-0">
+                                    <svg class="h-5 w-5 text-blue-400" fill="currentColor" viewBox="0 0 20 20">
+                                        <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"></path>
+                                    </svg>
+                                </div>
+                                <div class="ml-3">
+                                    <h3 class="text-sm font-medium text-blue-800">
+                                        Available FedEx Services
+                                    </h3>
+                                    <p class="text-sm text-blue-600 mt-1">
+                                        Only the main FedEx service types are available. You can select any option below.
+                                    </p>
+                                </div>
+                            </div>
+                            <div class="flex-shrink-0">
+                                <button
+                                    type="button"
+                                    id="toggleAllRates"
+                                    class="text-sm text-blue-600 hover:text-blue-800 font-medium underline"
+                                >
+                                    Show All Rates
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
                     <form method="GET" action="{{ route('shipment.checkout', $shipment) }}">
-                        <!-- Group rates by category -->
+                        <!-- Group rates by category and filter by delivery type preference -->
                         @php
                             $ratesCollection = collect($rates);
+                            // No longer using delivery_type - rates are filtered at API level
 
-                            $groundRates = $ratesCollection->filter(function($rate) {
+                            // Rates are already filtered at the API level
+                            $filteredRates = $ratesCollection;
+
+                            $groundRates = $filteredRates->filter(function($rate) {
                                 return strpos($rate->service_type, 'GROUND') !== false;
                             });
 
-                            $expressRates = $ratesCollection->filter(function($rate) {
+                            $expressRates = $filteredRates->filter(function($rate) {
                                 return strpos($rate->service_type, 'EXPRESS') !== false ||
                                        strpos($rate->service_type, '2_DAY') !== false ||
                                        strpos($rate->service_type, '3_DAY') !== false;
                             });
 
-                            $overnightRates = $ratesCollection->filter(function($rate) {
+                            $overnightRates = $filteredRates->filter(function($rate) {
                                 return strpos($rate->service_type, 'OVERNIGHT') !== false ||
                                        strpos($rate->service_type, '1_DAY') !== false ||
                                        strpos($rate->service_type, 'PRIORITY') !== false ||
                                        strpos($rate->service_type, 'FIRST') !== false;
                             });
 
-                            $otherRates = $ratesCollection->filter(function($rate) {
+                            $otherRates = $filteredRates->filter(function($rate) {
                                 return strpos($rate->service_type, 'GROUND') === false &&
                                        strpos($rate->service_type, 'EXPRESS') === false &&
                                        strpos($rate->service_type, '2_DAY') === false &&
@@ -88,7 +122,7 @@
 
                         <!-- Ground Services -->
                         @if(count($groundRates) > 0)
-                            <div class="mb-6">
+                            <div class="mb-6 rate-section">
                                 <h3 class="text-lg font-semibold text-gray-900 mb-3 border-b pb-2">Ground Services</h3>
                                 <div class="space-y-3">
                                     @foreach($groundRates as $rate)
@@ -133,7 +167,7 @@
 
                         <!-- Express Services -->
                         @if(count($expressRates) > 0)
-                            <div class="mb-6">
+                            <div class="mb-6 rate-section">
                                 <h3 class="text-lg font-semibold text-gray-900 mb-3 border-b pb-2">Express Services</h3>
                                 <div class="space-y-3">
                                     @foreach($expressRates as $rate)
@@ -178,7 +212,7 @@
 
                         <!-- Overnight Services -->
                         @if(count($overnightRates) > 0)
-                            <div class="mb-6">
+                            <div class="mb-6 rate-section">
                                 <h3 class="text-lg font-semibold text-gray-900 mb-3 border-b pb-2">Overnight Services</h3>
                                 <div class="space-y-3">
                                     @foreach($overnightRates as $rate)
@@ -223,7 +257,7 @@
 
                         <!-- Other Services -->
                         @if(count($otherRates) > 0)
-                            <div class="mb-6">
+                            <div class="mb-6 rate-section">
                                 <h3 class="text-lg font-semibold text-gray-900 mb-3 border-b pb-2">Other Services</h3>
                                 <div class="space-y-3">
                                     @foreach($otherRates as $rate)
@@ -266,6 +300,28 @@
                             </div>
                         @endif
 
+                        <!-- Show message if no rates match the delivery type preference -->
+                        @if(count($filteredRates) === 0)
+                            <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-6 text-center">
+                                <div class="mb-4">
+                                    <svg class="mx-auto h-12 w-12 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z"></path>
+                                    </svg>
+                                </div>
+                                <h3 class="text-lg font-medium text-yellow-800 mb-2">No rates match your delivery preference</h3>
+                                <p class="text-yellow-700 mb-4">
+                                    We couldn't find any {{ $deliveryType }} delivery options for this route.
+                                    Please try selecting a different delivery type or check back later.
+                                </p>
+                                <a href="{{ route('shipment.create', [
+                                    'origin_state' => $shipment->origin_state,
+                                    'destination_state' => $shipment->destination_state
+                                ]) }}" class="bg-yellow-600 text-white px-6 py-3 rounded-md font-medium hover:bg-yellow-700">
+                                    Try Different Options
+                                </a>
+                            </div>
+                        @endif
+
                         <div class="mt-8 flex justify-between">
                             <a href="{{ route('home') }}" class="bg-gray-500 text-white px-6 py-3 rounded-md font-medium hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2">
                                 Back to Home
@@ -302,11 +358,46 @@
 
 @push('scripts')
 <script>
-    // Auto-select first rate if only one option
     document.addEventListener('DOMContentLoaded', function() {
+        // Auto-select first rate if only one option
         const rateInputs = document.querySelectorAll('input[name="selected_rate"]');
         if (rateInputs.length === 1) {
             rateInputs[0].checked = true;
+        }
+
+        // Toggle between filtered and all rates
+        const toggleButton = document.getElementById('toggleAllRates');
+        const allRateSections = document.querySelectorAll('.rate-section');
+        let showingAllRates = false;
+
+        if (toggleButton) {
+            toggleButton.addEventListener('click', function() {
+                showingAllRates = !showingAllRates;
+
+                if (showingAllRates) {
+                    // Show all rate sections
+                    allRateSections.forEach(section => {
+                        section.style.display = 'block';
+                    });
+                    toggleButton.textContent = 'Show Filtered Rates';
+
+                    // Update header message
+                    const header = document.querySelector('.bg-blue-50 h3');
+                    if (header) {
+                        header.innerHTML = 'Showing <span class="font-semibold">all available</span> rates';
+                    }
+                } else {
+                    // Show only filtered rates (this would require server-side filtering)
+                    // For now, just change the button text
+                    toggleButton.textContent = 'Show All Rates';
+
+                    // Update header message
+                    const header = document.querySelector('.bg-blue-50 h3');
+                    if (header) {
+                        header.innerHTML = 'Available FedEx Services';
+                    }
+                }
+            });
         }
     });
 </script>

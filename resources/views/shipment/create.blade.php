@@ -16,6 +16,31 @@
 
         <!-- Main Form -->
         <div class="bg-white rounded-lg shadow-md p-8">
+            <!-- Display validation errors at the top -->
+            @if ($errors->any())
+                <div class="mb-6 bg-red-50 border border-red-200 rounded-md p-4">
+                    <div class="flex">
+                        <div class="flex-shrink-0">
+                            <svg class="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
+                            </svg>
+                        </div>
+                        <div class="ml-3">
+                            <h3 class="text-sm font-medium text-red-800">
+                                Please correct the following errors:
+                            </h3>
+                            <div class="mt-2 text-sm text-red-700">
+                                <ul class="list-disc list-inside space-y-1">
+                                    @foreach ($errors->all() as $error)
+                                        <li>{{ $error }}</li>
+                                    @endforeach
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            @endif
+
             <form method="POST" action="{{ route('shipment.quote') }}">
                 @csrf
                 <input type="hidden" name="origin_state" value="{{ $origin_state }}">
@@ -264,38 +289,25 @@
                                 @enderror
                             </div>
 
-                            <div class="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label for="pickup_ready_time" class="block text-sm font-medium text-gray-700 mb-2">
-                                        Ready Time *
-                                    </label>
-                                    <input
-                                        type="time"
-                                        id="pickup_ready_time"
-                                        name="pickup_ready_time"
-                                        value="{{ old('pickup_ready_time', '10:00') }}"
-                                        class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                                    >
-                                    @error('pickup_ready_time')
-                                        <p class="text-red-500 text-sm mt-1">{{ $message }}</p>
-                                    @enderror
-                                </div>
-
-                                <div>
-                                    <label for="pickup_close_time" class="block text-sm font-medium text-gray-700 mb-2">
-                                        Close Time *
-                                    </label>
-                                    <input
-                                        type="time"
-                                        id="pickup_close_time"
-                                        name="pickup_close_time"
-                                        value="{{ old('pickup_close_time', '17:00') }}"
-                                        class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                                    >
-                                    @error('pickup_close_time')
-                                        <p class="text-red-500 text-sm mt-1">{{ $message }}</p>
-                                    @enderror
-                                </div>
+                            <div>
+                                <label for="pickup_time_slot" class="block text-sm font-medium text-gray-700 mb-2">
+                                    Preferred Pickup Time *
+                                </label>
+                                <select
+                                    id="pickup_time_slot"
+                                    name="pickup_time_slot"
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                    required
+                                >
+                                    <option value="">Select Time Slot</option>
+                                    <option value="morning" {{ old('pickup_time_slot') == 'morning' ? 'selected' : '' }}>Morning (8 AM - 12 PM)</option>
+                                    <option value="afternoon" {{ old('pickup_time_slot') == 'afternoon' ? 'selected' : '' }}>Afternoon (12 PM - 4 PM)</option>
+                                    <option value="evening" {{ old('pickup_time_slot') == 'evening' ? 'selected' : '' }}>Evening (4 PM - 7 PM)</option>
+                                </select>
+                                @error('pickup_time_slot')
+                                    <p class="text-red-500 text-sm mt-1">{{ $message }}</p>
+                                @enderror
+                                <p class="text-sm text-gray-500 mt-1">FedEx will pick up your package during the selected time window.</p>
                             </div>
 
                             <div class="md:col-span-2">
@@ -420,8 +432,85 @@
 
                 <!-- Package Information -->
                 <div class="mb-10">
-                    <h2 class="text-xl font-semibold text-gray-900 mb-6 border-b pb-2">Package Information</h2>
+                    <h2 class="text-xl font-semibold text-gray-900 mb-6 border-b pb-2">Package Details</h2>
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                            <label for="bag_type" class="block text-sm font-medium text-gray-700 mb-2">
+                                Bag Type *
+                            </label>
+                            <select
+                                id="bag_type"
+                                name="bag_type"
+                                class="w-full px-3 py-2 border {{ $errors->has('bag_type') ? 'border-red-500' : 'border-gray-300' }} rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                onchange="updateBagSpecifications()"
+                                required
+                            >
+                                <option value="">Select Bag Type</option>
+                                <option value="small" {{ old('bag_type') == 'small' ? 'selected' : '' }}>Small Bag (18" x 14" x 4", 25 lbs)</option>
+                                <option value="medium" {{ old('bag_type') == 'medium' ? 'selected' : '' }}>Medium Bag (24" x 16" x 6", 40 lbs)</option>
+                                <option value="large" {{ old('bag_type') == 'large' ? 'selected' : '' }}>Large Bag (28" x 20" x 8", 55 lbs)</option>
+                            </select>
+                            @error('bag_type')
+                                <p class="text-red-500 text-sm mt-1">{{ $message }}</p>
+                            @enderror
+                        </div>
+
+                        <div>
+                            <label for="number_of_bags" class="block text-sm font-medium text-gray-700 mb-2">
+                                Number of Bags *
+                            </label>
+                            <input
+                                type="number"
+                                id="number_of_bags"
+                                name="number_of_bags"
+                                value="{{ old('number_of_bags', 1) }}"
+                                min="1"
+                                max="10"
+                                class="w-full px-3 py-2 border {{ $errors->has('number_of_bags') ? 'border-red-500' : 'border-gray-300' }} rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                onchange="updateBagSpecifications()"
+                                required
+                            >
+                            @error('number_of_bags')
+                                <p class="text-red-500 text-sm mt-1">{{ $message }}</p>
+                            @enderror
+                        </div>
+
+                        <div class="md:col-span-2">
+                            <label for="declared_value" class="block text-sm font-medium text-gray-700 mb-2">
+                                Declared Value ($)
+                            </label>
+                            <input
+                                type="number"
+                                step="0.01"
+                                id="declared_value"
+                                name="declared_value"
+                                value="{{ old('declared_value', '4.98') }}"
+                                min="0.01"
+                                class="w-full px-3 py-2 border {{ $errors->has('declared_value') ? 'border-red-500' : 'border-gray-300' }} rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                required
+                            >
+                            @error('declared_value')
+                                <p class="text-red-500 text-sm mt-1">{{ $message }}</p>
+                            @enderror
+                        </div>
+
+                        <!-- Display calculated values -->
+                        <div class="md:col-span-2" id="calculated-values" style="display: none;">
+                            <div class="bg-blue-50 border border-blue-200 rounded-md p-4">
+                                <h4 class="text-sm font-medium text-blue-800 mb-2">Calculated Package Details</h4>
+                                <div class="grid grid-cols-2 gap-4 text-sm">
+                                    <div>
+                                        <span class="text-blue-600">Total Weight:</span>
+                                        <span class="font-medium" id="display-weight">0 lbs</span>
+                                    </div>
+                                    <div>
+                                        <span class="text-blue-600">Dimensions:</span>
+                                        <span class="font-medium" id="display-dimensions">0" x 0" x 0"</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
                         <div class="md:col-span-2">
                             <label for="package_description" class="block text-sm font-medium text-gray-700 mb-2">
                                 Package Description *
@@ -438,99 +527,33 @@
                             @enderror
                         </div>
 
-                        <div>
-                            <label for="package_weight" class="block text-sm font-medium text-gray-700 mb-2">
-                                Weight (lbs) *
-                            </label>
-                            <input
-                                type="number"
-                                step="0.01"
-                                id="package_weight"
-                                name="package_weight"
-                                value="{{ old('package_weight') }}"
-                                class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 @error('package_weight') border-red-500 @enderror"
-                                required
-                            >
-                            @error('package_weight')
+                        <!-- Hidden fields for weight and dimensions - auto-populated by bag type -->
+                        <input type="hidden" id="package_weight" name="package_weight" value="{{ old('package_weight') }}">
+                        <input type="hidden" id="package_length" name="package_length" value="{{ old('package_length') }}">
+                        <input type="hidden" id="package_width" name="package_width" value="{{ old('package_width') }}">
+                        <input type="hidden" id="package_height" name="package_height" value="{{ old('package_height') }}">
+
+                        <!-- Show validation errors for hidden fields -->
+                        @error('package_weight')
+                            <div class="md:col-span-2">
                                 <p class="text-red-500 text-sm mt-1">{{ $message }}</p>
-                            @enderror
-                        </div>
-
-                        <div>
-                            <label for="declared_value" class="block text-sm font-medium text-gray-700 mb-2">
-                                Declared Value ($) *
-                            </label>
-                            <input
-                                type="number"
-                                step="0.01"
-                                id="declared_value"
-                                name="declared_value"
-                                value="{{ old('declared_value', '100.00') }}"
-                                min="1.00"
-                                placeholder="100.00"
-                                class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 @error('declared_value') border-red-500 @enderror"
-                                required
-                            >
-                            @error('declared_value')
+                            </div>
+                        @enderror
+                        @error('package_length')
+                            <div class="md:col-span-2">
                                 <p class="text-red-500 text-sm mt-1">{{ $message }}</p>
-                            @enderror
-                        </div>
-
-                        <div class="grid grid-cols-3 gap-4">
-                            <div>
-                                <label for="package_length" class="block text-sm font-medium text-gray-700 mb-2">
-                                    Length (in) *
-                                </label>
-                                <input
-                                    type="number"
-                                    step="0.01"
-                                    id="package_length"
-                                    name="package_length"
-                                    value="{{ old('package_length') }}"
-                                    class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 @error('package_length') border-red-500 @enderror"
-                                    required
-                                >
-                                @error('package_length')
-                                    <p class="text-red-500 text-sm mt-1">{{ $message }}</p>
-                                @enderror
                             </div>
-
-                            <div>
-                                <label for="package_width" class="block text-sm font-medium text-gray-700 mb-2">
-                                    Width (in) *
-                                </label>
-                                <input
-                                    type="number"
-                                    step="0.01"
-                                    id="package_width"
-                                    name="package_width"
-                                    value="{{ old('package_width') }}"
-                                    class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 @error('package_width') border-red-500 @enderror"
-                                    required
-                                >
-                                @error('package_width')
-                                    <p class="text-red-500 text-sm mt-1">{{ $message }}</p>
-                                @enderror
+                        @enderror
+                        @error('package_width')
+                            <div class="md:col-span-2">
+                                <p class="text-red-500 text-sm mt-1">{{ $message }}</p>
                             </div>
-
-                            <div>
-                                <label for="package_height" class="block text-sm font-medium text-gray-700 mb-2">
-                                    Height (in) *
-                                </label>
-                                <input
-                                    type="number"
-                                    step="0.01"
-                                    id="package_height"
-                                    name="package_height"
-                                    value="{{ old('package_height') }}"
-                                    class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 @error('package_height') border-red-500 @enderror"
-                                    required
-                                >
-                                @error('package_height')
-                                    <p class="text-red-500 text-sm mt-1">{{ $message }}</p>
-                                @enderror
+                        @enderror
+                        @error('package_height')
+                            <div class="md:col-span-2">
+                                <p class="text-red-500 text-sm mt-1">{{ $message }}</p>
                             </div>
-                        </div>
+                        @enderror
                     </div>
                 </div>
 
@@ -538,25 +561,6 @@
                 <div class="mb-10">
                     <h2 class="text-xl font-semibold text-gray-900 mb-6 border-b pb-2">Shipping Preferences</h2>
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div>
-                            <label for="delivery_type" class="block text-sm font-medium text-gray-700 mb-2">
-                                Preferred Delivery Type *
-                            </label>
-                            <select
-                                id="delivery_type"
-                                name="delivery_type"
-                                class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 @error('delivery_type') border-red-500 @enderror"
-                                required
-                            >
-                                <option value="">Select Delivery Type</option>
-                                <option value="standard" {{ old('delivery_type') == 'standard' ? 'selected' : '' }}>Standard</option>
-                                <option value="express" {{ old('delivery_type') == 'express' ? 'selected' : '' }}>Express</option>
-                                <option value="overnight" {{ old('delivery_type') == 'overnight' ? 'selected' : '' }}>Overnight</option>
-                            </select>
-                            @error('delivery_type')
-                                <p class="text-red-500 text-sm mt-1">{{ $message }}</p>
-                            @enderror
-                        </div>
 
                         <div>
                             <label for="preferred_ship_date" class="block text-sm font-medium text-gray-700 mb-2">
@@ -610,8 +614,7 @@
 
             // Make pickup fields required
             document.getElementById('pickup_date').required = true;
-            document.getElementById('pickup_ready_time').required = true;
-            document.getElementById('pickup_close_time').required = true;
+            document.getElementById('pickup_time_slot').required = true;
         } else {
             pickupAddressSection.classList.add('hidden');
             pickupSchedulingSection.classList.add('hidden');
@@ -619,8 +622,7 @@
 
             // Remove required attribute from pickup fields
             document.getElementById('pickup_date').required = false;
-            document.getElementById('pickup_ready_time').required = false;
-            document.getElementById('pickup_close_time').required = false;
+            document.getElementById('pickup_time_slot').required = false;
         }
     }
 
@@ -676,9 +678,134 @@
         }
     }
 
+    // Update bag specifications when bag type or number changes
+        function updateBagSpecifications() {
+            const bagType = document.getElementById('bag_type').value;
+            const numberOfBags = parseInt(document.getElementById('number_of_bags').value) || 1;
+            const calculatedValuesDiv = document.getElementById('calculated-values');
+            const numberOfBagsInput = document.getElementById('number_of_bags');
+
+            if (bagType) {
+                const bagSpecs = {
+                    'small': { weight: 25, length: 18, width: 14, height: 4, name: 'Small Bag' },
+                    'medium': { weight: 40, length: 24, width: 16, height: 6, name: 'Medium Bag' },
+                    'large': { weight: 55, length: 28, width: 20, height: 8, name: 'Large Bag' }
+                };
+
+                const specs = bagSpecs[bagType];
+                if (specs) {
+                    // Update weight (total weight = single bag weight * number of bags)
+                    const totalWeight = specs.weight * numberOfBags;
+                    document.getElementById('package_weight').value = totalWeight;
+
+                    // Update dimensions (single bag dimensions)
+                    document.getElementById('package_length').value = specs.length;
+                    document.getElementById('package_width').value = specs.width;
+                    document.getElementById('package_height').value = specs.height;
+
+                    // Show calculated values
+                    const weightClass = 'text-blue-600';
+                    const weightValueClass = 'font-medium';
+
+                    document.getElementById('display-weight').textContent = totalWeight + ' lbs';
+                    document.getElementById('display-weight').className = weightValueClass;
+                    document.getElementById('display-dimensions').textContent = specs.length + '" x ' + specs.width + '" x ' + specs.height + '"';
+
+                    // Update the calculated values display with warning
+                    calculatedValuesDiv.innerHTML = `
+                        <div class="bg-blue-50 border border-blue-200 rounded-md p-4">
+                            <h4 class="text-sm font-medium text-blue-800 mb-2">Calculated Package Details</h4>
+                            <div class="grid grid-cols-2 gap-4 text-sm">
+                                <div>
+                                    <span class="${weightClass}">Total Weight:</span>
+                                    <span class="${weightValueClass}">${totalWeight} lbs</span>
+                                </div>
+                                <div>
+                                    <span class="text-blue-600">Dimensions:</span>
+                                    <span class="font-medium">${specs.length}" x ${specs.width}" x ${specs.height}"</span>
+                                </div>
+                                <div>
+                                    <span class="text-blue-600">Bag Type:</span>
+                                    <span class="font-medium">${specs.name}</span>
+                                </div>
+                                <div>
+                                    <span class="text-blue-600">Quantity:</span>
+                                    <span class="font-medium">${numberOfBags} bag${numberOfBags > 1 ? 's' : ''}</span>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                    calculatedValuesDiv.style.display = 'block';
+                }
+            } else {
+                // Hide calculated values if no bag type selected
+                calculatedValuesDiv.style.display = 'none';
+
+                // Remove error styling
+                numberOfBagsInput.classList.remove('border-red-500', 'border-green-500');
+            }
+        }
+
     // Initialize on page load
     document.addEventListener('DOMContentLoaded', function() {
         togglePickupFields();
+        updateBagSpecifications();
+
+        // Add form validation debugging
+        const form = document.querySelector('form');
+        if (form) {
+            form.addEventListener('submit', function(e) {
+                console.log('Form submission started');
+
+                // Check if required fields are filled
+                const bagType = document.getElementById('bag_type');
+                const numberOfBags = document.getElementById('number_of_bags');
+
+                if (!bagType.value) {
+                    console.log('Bag type is required');
+                    e.preventDefault();
+                    return false;
+                }
+
+                if (!numberOfBags.value || numberOfBags.value < 1 || numberOfBags.value > 10) {
+                    console.log('Number of bags is required and must be between 1-10');
+                    e.preventDefault();
+                    return false;
+                }
+
+
+                console.log('Form validation passed');
+            });
+        }
+
+        // Add real-time validation for bag fields
+        const bagTypeSelect = document.getElementById('bag_type');
+        const numberOfBagsInput = document.getElementById('number_of_bags');
+
+        if (bagTypeSelect) {
+            bagTypeSelect.addEventListener('change', function() {
+                if (this.value) {
+                    this.classList.remove('border-red-500');
+                    this.classList.add('border-green-500');
+                } else {
+                    this.classList.remove('border-green-500');
+                    this.classList.add('border-red-500');
+                }
+            });
+        }
+
+        if (numberOfBagsInput) {
+            numberOfBagsInput.addEventListener('input', function() {
+                const value = parseInt(this.value);
+                if (value >= 1 && value <= 10) {
+                    this.classList.remove('border-red-500');
+                    this.classList.add('border-green-500');
+                } else {
+                    this.classList.remove('border-green-500');
+                    this.classList.add('border-red-500');
+                }
+            });
+        }
 
         // Get elements
         const pickupCity = document.getElementById('pickup_city');

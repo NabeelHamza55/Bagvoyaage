@@ -27,6 +27,7 @@ class Shipment extends Model
         'pickup_state',
         'pickup_postal_code',
         'pickup_date',
+        'pickup_time_slot',
         'pickup_ready_time',
         'pickup_close_time',
         'pickup_instructions',
@@ -43,9 +44,10 @@ class Shipment extends Model
         'weight_unit',
         'dimension_unit',
         'package_description',
+        'bag_type',
+        'number_of_bags',
         'declared_value',
         'currency_code',
-        'delivery_type',
         'preferred_ship_date',
         'tracking_number',
         'pickup_scheduled',
@@ -82,6 +84,63 @@ class Shipment extends Model
     }
 
     // Helper methods
+    public function getBagSpecifications(): array
+    {
+        $specs = [
+            'small' => [
+                'name' => 'Small Bag',
+                'dimensions' => '18" x 14" x 4"',
+                'weight' => 25,
+                'length' => 18,
+                'width' => 14,
+                'height' => 4
+            ],
+            'medium' => [
+                'name' => 'Medium Bag',
+                'dimensions' => '24" x 16" x 6"',
+                'weight' => 40,
+                'length' => 24,
+                'width' => 16,
+                'height' => 6
+            ],
+            'large' => [
+                'name' => 'Large Bag',
+                'dimensions' => '28" x 20" x 8"',
+                'weight' => 55,
+                'length' => 28,
+                'width' => 20,
+                'height' => 8
+            ]
+        ];
+
+        return $specs[$this->bag_type] ?? $specs['small'];
+    }
+
+    public function getTotalWeight(): float
+    {
+        if ($this->bag_type && $this->number_of_bags) {
+            $specs = $this->getBagSpecifications();
+            return $specs['weight'] * $this->number_of_bags;
+        }
+        return $this->package_weight;
+    }
+
+    public function getTotalDimensions(): array
+    {
+        if ($this->bag_type && $this->number_of_bags) {
+            $specs = $this->getBagSpecifications();
+            return [
+                'length' => $specs['length'],
+                'width' => $specs['width'],
+                'height' => $specs['height']
+            ];
+        }
+        return [
+            'length' => $this->package_length,
+            'width' => $this->package_width,
+            'height' => $this->package_height
+        ];
+    }
     public function getPackageVolume(): float
     {
         return $this->package_length * $this->package_width * $this->package_height;

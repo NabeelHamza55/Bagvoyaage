@@ -25,7 +25,7 @@
                 </div>
                 <div>
                     <p class="text-sm text-gray-600">Service Type</p>
-                    <p class="font-medium">{{ ucfirst($shipment->delivery_type) }}</p>
+                    <p class="font-medium">{{ $shipment->selectedRate ? $shipment->selectedRate->getServiceDisplayName() : 'Service Selected' }}</p>
                 </div>
                 <div>
                     <p class="text-sm text-gray-600">Ship Date</p>

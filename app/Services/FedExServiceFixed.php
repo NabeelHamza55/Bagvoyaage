@@ -64,10 +64,43 @@ class FedExServiceFixed
         try {
             $token = $this->getAccessToken();
 
+            // Determine if this is a domestic shipment
+            $isDomestic = $this->isDomesticShipment($shipment);
+
+        // Use selected rate's service type (required)
+        $selectedRate = $shipment->selectedRate;
+        if (!$selectedRate || empty($selectedRate->service_type)) {
+            throw new \Exception('No service type selected. Please select a shipping rate before creating shipment.');
+        }
+
+        $serviceType = $selectedRate->service_type;
+        Log::info('Using selected rate service type', [
+            'shipment_id' => $shipment->id,
+            'selected_service_type' => $serviceType,
+            'rate_id' => $selectedRate->id
+        ]);
+
+            // Validate service type compatibility
+            $this->validateServiceTypeCompatibility($serviceType, $shipment);
+
+            // Check if this is a same-state shipment
+            $isSameState = $shipment->sender_state === $shipment->recipient_state;
+
+            // Get package weight for logging
+            $packageWeight = $shipment->getTotalWeight();
+
             Log::info('Creating FedEx shipment', [
                 'shipment_id' => $shipment->id,
-                'recipient_state' => $shipment->recipient_state,
-                'package_weight' => $shipment->package_weight
+                'package_weight' => $packageWeight,
+                'bag_type' => $shipment->bag_type,
+                'number_of_bags' => $shipment->number_of_bags,
+                'is_domestic' => $isDomestic,
+                'is_same_state' => $isSameState,
+                'service_type' => $serviceType,
+                'using_selected_rate' => !empty($selectedRate),
+                'selected_rate_id' => $selectedRate->id ?? null,
+                'sender_state' => $shipment->sender_state,
+                'recipient_state' => $shipment->recipient_state
             ]);
 
             // Validate required fields
@@ -83,12 +116,15 @@ class FedExServiceFixed
             // Format package description
             $packageDesc = $this->formatPackageDescription($shipment->package_description);
 
+            // Use bag specifications if available, otherwise use manual dimensions
+            $packageDimensions = $shipment->getTotalDimensions();
+
             // Validate and format dimensions
             $dimensions = $this->validatePackageDimensions(
-                (float)$shipment->package_length,
-                (float)$shipment->package_width,
-                (float)$shipment->package_height,
-                (float)$shipment->package_weight
+                (float)$packageDimensions['length'],
+                (float)$packageDimensions['width'],
+                (float)$packageDimensions['height'],
+                (float)$packageWeight
             );
 
             // Determine pickup type - use correct FedEx API values
@@ -132,7 +168,7 @@ class FedExServiceFixed
                             'stateOrProvinceCode' => $shipment->sender_state,
                             'postalCode' => $shipment->sender_zipcode,
                             'countryCode' => 'US',
-                            'residential' => true // Default to residential for consumer shipments
+                            'residential' => false // Default to business for better service compatibility
                         ]
                     ],
                     'recipients' => [
@@ -151,13 +187,13 @@ class FedExServiceFixed
                                 'stateOrProvinceCode' => $shipment->recipient_state,
                                 'postalCode' => $shipment->recipient_postal_code,
                                 'countryCode' => 'US',
-                                'residential' => true // Default to residential for consumer shipments
+                                'residential' => false // Default to business for better service compatibility
                             ],
                             'deliveryInstructions' => null // Optional, can be null
                         ]
                     ],
                     'shipDatestamp' => $shipment->preferred_ship_date->format('Y-m-d'),
-                    'serviceType' => $this->mapDeliveryTypeToService($shipment->delivery_type),
+                    'serviceType' => $serviceType,
                     'packagingType' => $shipment->packaging_type ?? 'YOUR_PACKAGING',
                     'pickupType' => $pickupType,
                     'shippingChargesPayment' => [
@@ -215,7 +251,7 @@ class FedExServiceFixed
             Log::debug('FedEx shipment payload', [
                 'shipment_id' => $shipment->id,
                 'pickup_type' => $pickupType,
-                'service_type' => $this->mapDeliveryTypeToService($shipment->delivery_type)
+                'service_type' => $shipment->selectedRate->service_type
             ]);
 
             // Also log the actual payload structure for debugging
@@ -321,6 +357,53 @@ class FedExServiceFixed
                         'errors' => $errorData['errors'],
                         'transaction_id' => $errorData['transactionId'] ?? 'Unknown'
                     ]);
+
+                    // Check for service type errors that need fallback
+                    $needsFallback = false;
+                    $errorType = '';
+
+                    foreach ($errorData['errors'] as $error) {
+                        $errorCode = $error['code'] ?? '';
+
+                        if (strpos($errorCode, 'SERVICETYPEANDADDRESS.MISMATCH') !== false) {
+                            $needsFallback = true;
+                            $errorType = 'SERVICETYPEANDADDRESS.MISMATCH';
+                            Log::info('Found service/address mismatch error', [
+                                'shipment_id' => $shipment->id,
+                                'error_code' => $errorCode,
+                                'error_message' => $error['message'] ?? 'No message'
+                            ]);
+                            break;
+                        } elseif (strpos($errorCode, 'SERVICETYPE.NOTSUPPORTED') !== false) {
+                            $needsFallback = true;
+                            $errorType = 'SERVICETYPE.NOTSUPPORTED';
+                            Log::info('Found service type not supported error', [
+                                'shipment_id' => $shipment->id,
+                                'error_code' => $errorCode,
+                                'error_message' => $error['message'] ?? 'No message'
+                            ]);
+                            break;
+                        }
+                    }
+
+                    if ($needsFallback) {
+                        // Always fail gracefully - no automatic fallbacks
+                        Log::error('Service type not available - failing gracefully', [
+                            'shipment_id' => $shipment->id,
+                            'service_type' => $serviceType,
+                            'error_code' => $errorType,
+                            'message' => 'The selected service type is not available for this route.'
+                        ]);
+
+                        // Provide clear error message to user
+                        $errorMessage = $this->getServiceErrorMessage($serviceType, $errorType);
+                        throw new \Exception($errorMessage);
+                    } else {
+                        Log::info('No service type errors detected', [
+                            'shipment_id' => $shipment->id,
+                            'error_codes' => array_column($errorData['errors'], 'code')
+                        ]);
+                    }
                 }
             } catch (\Exception $parseException) {
                 // Parsing failed, use generic message
@@ -754,16 +837,75 @@ class FedExServiceFixed
     /**
      * Map delivery type to FedEx service type
      */
-    private function mapDeliveryTypeToService(string $deliveryType): string
+    /**
+     * Determine if shipment is domestic (US to US)
+     */
+    private function isDomesticShipment(Shipment $shipment): bool
     {
-        return match($deliveryType) {
-            'standard' => 'FEDEX_GROUND',
-            'express' => 'FEDEX_2_DAY',
-            'overnight' => 'PRIORITY_OVERNIGHT',
-            default => 'FEDEX_GROUND'
+        // For now, assume all shipments are domestic US to US
+        // This system appears to be designed for US domestic shipping only
+        // based on the form fields and state/city selection
+
+        // Validate that we have US state codes
+        $senderState = $shipment->sender_state ?? '';
+        $recipientState = $shipment->recipient_state ?? '';
+
+        // Check if states are valid US state codes (2 letters)
+        $isValidUSState = function($state) {
+            return strlen($state) === 2 && ctype_alpha($state);
         };
+
+        return $isValidUSState($senderState) && $isValidUSState($recipientState);
     }
 
+    /**
+     * Validate service type compatibility with shipment details
+     */
+    private function validateServiceTypeCompatibility(string $serviceType, Shipment $shipment): void
+    {
+        $errors = [];
+
+        // Weight limits removed - no longer enforcing 150 lbs limit
+
+        // Check for Alaska/Hawaii restrictions
+        $recipientState = $shipment->recipient_state ?? '';
+        if (in_array($recipientState, ['AK', 'HI']) && str_contains($serviceType, 'GROUND')) {
+            // FedEx Ground has limited service to Alaska and Hawaii
+            Log::warning('FedEx Ground service to Alaska/Hawaii may have limited availability', [
+                'shipment_id' => $shipment->id,
+                'recipient_state' => $recipientState,
+                'service_type' => $serviceType
+            ]);
+        }
+
+        if (!empty($errors)) {
+            throw new \Exception('Service type validation failed: ' . implode(', ', $errors));
+        }
+    }
+
+
+
+
+
+    /**
+     * Get user-friendly error message for service type failures
+     */
+    private function getServiceErrorMessage(string $serviceType, string $errorType): string
+    {
+        switch ($errorType) {
+            case 'SERVICETYPEANDADDRESS.MISMATCH':
+                return "The selected service type '{$serviceType}' is not available for this route. Please try a different service type or contact support.";
+
+            case 'SERVICETYPE.NOTSUPPORTED':
+                if ($serviceType === 'FEDEX_HOME_DELIVERY') {
+                    return "FedEx Home Delivery is not available for this route. Please select a different service type.";
+                }
+                return "The selected service type '{$serviceType}' is not supported for this route. Please try a different service type.";
+
+            default:
+                return "The selected service type '{$serviceType}' is not available for this route. Please try a different service type.";
+        }
+    }
 
 
     /**
@@ -783,7 +925,7 @@ class FedExServiceFixed
                 'pickup_type' => $shipment->pickup_type,
                 'pickup_address' => $shipment->sender_address_line,
                 'pickup_date' => $shipment->preferred_ship_date->format('Y-m-d'),
-                'service_type' => $this->mapDeliveryTypeToService($shipment->delivery_type)
+                'service_type' => $shipment->selectedRate->service_type
             ]);
 
             $token = $this->getAccessToken();
@@ -808,22 +950,48 @@ class FedExServiceFixed
             $pickupState = $shipment->sender_state;
             $pickupPostalCode = $shipment->sender_zipcode;
 
-            // Format date for pickup - use next business day if today
+            // Format date for pickup - ensure it's a business day
             $pickupDate = $shipment->preferred_ship_date;
-            if ($pickupDate->isPast()) {
+
+            // If date is in the past or is a weekend, move to next business day
+            if ($pickupDate->isPast() || $pickupDate->isWeekend()) {
                 $pickupDate = \Carbon\Carbon::now()->addDay();
-                // If weekend, move to Monday
-                if ($pickupDate->isWeekend()) {
-                    $pickupDate = $pickupDate->next(\Carbon\Carbon::MONDAY);
+                // Keep moving forward until we find a business day
+                while ($pickupDate->isWeekend()) {
+                    $pickupDate = $pickupDate->addDay();
                 }
             }
 
-            // Format times according to FedEx documentation
-            $readyTime = $pickupDate->format('Y-m-d') . 'T09:00:00-05:00'; // ISO 8601 with timezone for readyDateTimestamp
-            $closeTime = '17:00:00'; // HH:MM:SS format for customerCloseTime (FedEx requirement)
+            Log::info('Pickup date validation', [
+                'shipment_id' => $shipment->id,
+                'original_date' => $shipment->preferred_ship_date->format('Y-m-d'),
+                'final_date' => $pickupDate->format('Y-m-d'),
+                'is_weekend' => $pickupDate->isWeekend(),
+                'day_of_week' => $pickupDate->format('l')
+            ]);
+
+            // Format times according to FedEx documentation based on time slot
+            $timeSlot = $shipment->pickup_time_slot ?? 'morning';
+            switch ($timeSlot) {
+                case 'morning':
+                    $readyTime = $pickupDate->format('Y-m-d') . 'T08:00:00-05:00';
+                    $closeTime = '12:00:00';
+                    break;
+                case 'afternoon':
+                    $readyTime = $pickupDate->format('Y-m-d') . 'T12:00:00-05:00';
+                    $closeTime = '16:00:00';
+                    break;
+                case 'evening':
+                    $readyTime = $pickupDate->format('Y-m-d') . 'T16:00:00-05:00';
+                    $closeTime = '19:00:00';
+                    break;
+                default:
+                    $readyTime = $pickupDate->format('Y-m-d') . 'T09:00:00-05:00';
+                    $closeTime = '17:00:00';
+            }
 
             // Determine carrier code based on service type
-            $serviceType = $this->mapDeliveryTypeToService($shipment->delivery_type);
+            $serviceType = $shipment->selectedRate->service_type;
             $carrierCode = str_starts_with($serviceType, 'FEDEX_GROUND') ? 'FDXG' : 'FDXE';
 
             // Build payload according to FedEx Pickup API documentation
@@ -845,7 +1013,7 @@ class FedExServiceFixed
                             'stateOrProvinceCode' => $pickupState,
                             'postalCode' => $pickupPostalCode,
                             'countryCode' => 'US',
-                            'residential' => true
+                            'residential' => false
                         ]
                     ],
                     'packageLocation' => 'FRONT_DOOR',
@@ -893,17 +1061,45 @@ class FedExServiceFixed
                 'pickup_date_type' => $pickupDate->isToday() ? 'SAME_DAY' : 'FUTURE_DAY'
             ]);
 
-            Log::info('Making FedEx pickup API request', [
-                'shipment_id' => $shipment->id,
-                'endpoint' => $this->baseUrl . '/pickup/v1/pickups',
-                'payload_size' => strlen(json_encode($payload))
-            ]);
+            // Make the API request with retry logic for service unavailable errors
+            $maxRetries = 3;
+            $retryDelay = 5; // seconds
+            $response = null;
 
-            $response = \Illuminate\Support\Facades\Http::withHeaders([
-                'Authorization' => 'Bearer ' . $token,
-                'Content-Type' => 'application/json',
-                'X-locale' => 'en_US'
-            ])->post($this->baseUrl . '/pickup/v1/pickups', $payload);
+            for ($attempt = 1; $attempt <= $maxRetries; $attempt++) {
+                Log::info('Making FedEx pickup API request', [
+                    'shipment_id' => $shipment->id,
+                    'endpoint' => $this->baseUrl . '/pickup/v1/pickups',
+                    'payload_size' => strlen(json_encode($payload)),
+                    'attempt' => $attempt,
+                    'max_retries' => $maxRetries
+                ]);
+
+                $response = \Illuminate\Support\Facades\Http::withHeaders([
+                    'Authorization' => 'Bearer ' . $token,
+                    'Content-Type' => 'application/json',
+                    'X-locale' => 'en_US'
+                ])->post($this->baseUrl . '/pickup/v1/pickups', $payload);
+
+                // Check if it's a service unavailable error and we can retry
+                if ($response->status() === 503) {
+                    $errorData = $response->json();
+                    if (isset($errorData['errors'][0]['code']) && $errorData['errors'][0]['code'] === 'SERVICE.UNAVAILABLE.ERROR') {
+                        if ($attempt < $maxRetries) {
+                            Log::warning('FedEx pickup service unavailable, retrying', [
+                                'shipment_id' => $shipment->id,
+                                'attempt' => $attempt,
+                                'next_retry_in' => $retryDelay . ' seconds'
+                            ]);
+                            sleep($retryDelay);
+                            continue;
+                        }
+                    }
+                }
+
+                // If we get here, either it's not a retryable error or we've exhausted retries
+                break;
+            }
 
             if ($response->successful()) {
                 $data = $response->json();
@@ -956,7 +1152,34 @@ class FedExServiceFixed
             try {
                 $errorData = $response->json();
                 if (isset($errorData['errors']) && is_array($errorData['errors']) && !empty($errorData['errors'])) {
+                    $errorCode = $errorData['errors'][0]['code'] ?? '';
                     $errorMessage .= ': ' . ($errorData['errors'][0]['message'] ?? 'Unknown error');
+
+                    // Handle specific error codes
+                    if ($errorCode === 'SERVICE.UNAVAILABLE.ERROR') {
+                        $errorMessage = 'FedEx pickup service is temporarily unavailable. The shipment has been created successfully, but pickup scheduling failed. You can manually schedule the pickup later or contact support.';
+                        Log::warning('FedEx pickup service unavailable', [
+                            'shipment_id' => $shipment->id,
+                            'error_code' => $errorCode,
+                            'message' => 'Service temporarily unavailable - shipment created but pickup failed'
+                        ]);
+
+                        // Don't throw exception for service unavailable - just log and continue
+                        return [
+                            'success' => false,
+                            'error' => 'pickup_service_unavailable',
+                            'message' => $errorMessage,
+                            'shipment_created' => true,
+                            'can_retry' => true
+                        ];
+                    } elseif ($errorCode === 'PICKUPDATE.NOT.WORKINGDAY') {
+                        $errorMessage = 'The selected pickup date is not a working day. Please select a business day for pickup.';
+                        Log::warning('Pickup date not a working day', [
+                            'shipment_id' => $shipment->id,
+                            'pickup_date' => $pickupDate->format('Y-m-d'),
+                            'day_of_week' => $pickupDate->format('l')
+                        ]);
+                    }
 
                     // Log more detailed error information
                     Log::error('FedEx API Pickup Error Details', [
@@ -1231,6 +1454,17 @@ class FedExServiceFixed
             foreach ($response['output']['rateReplyDetails'] as $rateDetail) {
                 $serviceType = $rateDetail['serviceType'] ?? 'UNKNOWN';
 
+                // Filter to show only specific FedEx services
+                $allowedServices = ['PRIORITY_OVERNIGHT', 'FEDEX_2_DAY', 'FEDEX_GROUND'];
+                if (!in_array($serviceType, $allowedServices)) {
+                    Log::info('Filtering out service type', [
+                        'shipment_id' => $shipment->id,
+                        'service_type' => $serviceType,
+                        'reason' => 'Not in allowed services list'
+                    ]);
+                    continue;
+                }
+
                 // Skip if no rated shipment details
                 if (!isset($rateDetail['ratedShipmentDetails']) || empty($rateDetail['ratedShipmentDetails'])) {
                     continue;
@@ -1316,7 +1550,7 @@ class FedExServiceFixed
             }
 
             // Determine carrier code based on service type
-            $serviceType = $this->mapDeliveryTypeToService($shipment->delivery_type);
+            $serviceType = $shipment->selectedRate->service_type;
             $carrierCode = str_starts_with($serviceType, 'FEDEX_GROUND') ? 'FDXG' : 'FDXE';
 
             // Build payload according to FedEx Pickup Availability API

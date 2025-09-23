@@ -101,6 +101,7 @@ class ShipmentController extends Controller
             'pickup_zip' => 'nullable|string|max:10',
             // Pickup Scheduling (conditional)
             'pickup_date' => 'nullable|date|after:today',
+            'pickup_time_slot' => 'nullable|in:morning,afternoon,evening',
             'pickup_ready_time' => 'nullable|date_format:H:i',
             'pickup_close_time' => 'nullable|date_format:H:i|after:pickup_ready_time',
             'pickup_instructions' => 'nullable|string|max:500',
@@ -112,17 +113,18 @@ class ShipmentController extends Controller
             'recipient_city_custom' => 'nullable|string|max:100',
             'recipient_zip' => 'required|string|max:10',
             // Package Information (Required)
-            'package_length' => 'required|numeric|min:0.01|max:108',
-            'package_width' => 'required|numeric|min:0.01|max:70',
-            'package_height' => 'required|numeric|min:0.01|max:70',
-            'package_weight' => 'required|numeric|min:0.01|max:150',
+            'package_length' => 'nullable|numeric|min:0.01|max:108',
+            'package_width' => 'nullable|numeric|min:0.01|max:70',
+            'package_height' => 'nullable|numeric|min:0.01|max:70',
+            'package_weight' => 'nullable|numeric|min:0.01',
             'weight_unit' => 'required|in:LB,KG',
             'dimension_unit' => 'required|in:IN,CM',
             'package_description' => 'required|string|max:500',
+            'bag_type' => 'required|in:small,medium,large',
+            'number_of_bags' => 'required|integer|min:1|max:10',
             'declared_value' => 'required|numeric|min:1.00|max:50000.00',
             'currency_code' => 'required|string|size:3',
             // Shipping Preferences
-            'delivery_type' => 'required|in:standard,express,overnight',
             'preferred_ship_date' => 'required|date|after_or_equal:today',
         ]);
 
@@ -134,9 +136,55 @@ class ShipmentController extends Controller
                 'pickup_city_custom' => 'nullable|string|max:100',
                 'pickup_zip' => 'required|string|max:10',
                 'pickup_date' => 'required|date|after:today',
-                'pickup_ready_time' => 'required|date_format:H:i',
-                'pickup_close_time' => 'required|date_format:H:i|after:pickup_ready_time',
+                'pickup_time_slot' => 'required|in:morning,afternoon,evening',
+                // pickup_ready_time and pickup_close_time are now auto-generated from pickup_time_slot
+                'pickup_ready_time' => 'nullable|date_format:H:i',
+                'pickup_close_time' => 'nullable|date_format:H:i',
             ]);
+        }
+
+        // Convert time slot to ready/close times if provided
+        if (isset($validated['pickup_time_slot']) && !isset($validated['pickup_ready_time'])) {
+            $timeSlot = $validated['pickup_time_slot'];
+            switch ($timeSlot) {
+                case 'morning':
+                    $validated['pickup_ready_time'] = '08:00';
+                    $validated['pickup_close_time'] = '12:00';
+                    break;
+                case 'afternoon':
+                    $validated['pickup_ready_time'] = '12:00';
+                    $validated['pickup_close_time'] = '16:00';
+                    break;
+                case 'evening':
+                    $validated['pickup_ready_time'] = '16:00';
+                    $validated['pickup_close_time'] = '19:00';
+                    break;
+            }
+        }
+
+        // Auto-set weight and dimensions based on bag type
+        if (isset($validated['bag_type']) && isset($validated['number_of_bags'])) {
+            $bagSpecs = [
+                'small' => ['weight' => 25, 'length' => 18, 'width' => 14, 'height' => 4],
+                'medium' => ['weight' => 40, 'length' => 24, 'width' => 16, 'height' => 6],
+                'large' => ['weight' => 55, 'length' => 28, 'width' => 20, 'height' => 8]
+            ];
+
+            if (isset($bagSpecs[$validated['bag_type']])) {
+                $specs = $bagSpecs[$validated['bag_type']];
+                $calculatedWeight = $specs['weight'] * $validated['number_of_bags'];
+
+                $validated['package_weight'] = $calculatedWeight;
+                $validated['package_length'] = $specs['length'];
+                $validated['package_width'] = $specs['width'];
+                $validated['package_height'] = $specs['height'];
+            }
+        } else {
+            // If no bag type selected, require manual input
+            if (empty($validated['package_weight']) || empty($validated['package_length']) ||
+                empty($validated['package_width']) || empty($validated['package_height'])) {
+                throw new \Exception('Please select a bag type or provide manual package dimensions.');
+            }
         }
 
         // Create shipment data without ZIP validation
@@ -484,11 +532,27 @@ class ShipmentController extends Controller
                         $notificationService = new \App\Services\NotificationService();
                         $notificationService->sendPickupScheduled($shipment);
                     } else {
-                        Log::error('FedEx pickup scheduling failed after shipment creation', [
-                            'shipment_id' => $shipment->id,
-                            'error' => $pickupResult['message'] ?? 'Unknown error',
-                            'error_code' => $pickupResult['error_code'] ?? null
-                        ]);
+                        // Handle different types of pickup failures
+                        if (isset($pickupResult['error']) && $pickupResult['error'] === 'pickup_service_unavailable') {
+                            // Service unavailable - don't treat as critical error
+                            Log::warning('FedEx pickup service unavailable - shipment created but pickup failed', [
+                                'shipment_id' => $shipment->id,
+                                'error' => $pickupResult['error'],
+                                'message' => $pickupResult['message'] ?? 'Service unavailable',
+                                'can_retry' => $pickupResult['can_retry'] ?? false
+                            ]);
+
+                            // Don't change shipment status - it's still valid
+                            $shipment->status = 'label_generated'; // Keep as label generated
+                            $shipment->save();
+                        } else {
+                            // Other pickup errors
+                            Log::error('FedEx pickup scheduling failed after shipment creation', [
+                                'shipment_id' => $shipment->id,
+                                'error' => $pickupResult['message'] ?? 'Unknown error',
+                                'error_code' => $pickupResult['error_code'] ?? null
+                            ]);
+                        }
 
                         // Still mark as scheduled but with error note
                         $shipment->pickup_scheduled = true;

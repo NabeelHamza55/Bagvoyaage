@@ -36,7 +36,7 @@
                     </div>
                     <div>
                         <p class="text-sm text-gray-600">Delivery Type</p>
-                        <p class="font-medium">{{ ucfirst($shipment->delivery_type) }}</p>
+                        <p class="font-medium">{{ $shipment->selectedRate ? $shipment->selectedRate->getServiceDisplayName() : 'Service Selected' }}</p>
                     </div>
                 </div>
             </div>
@@ -73,7 +73,22 @@
                         value="{{ $shipment->preferred_ship_date->format('Y-m-d') }}"
                         min="{{ now()->format('Y-m-d') }}"
                         class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500">
-                    <p class="text-sm text-gray-500 mt-1">FedEx will pick up your package between 9:00 AM and 5:00 PM on the selected date.</p>
+                </div>
+
+                <div class="mb-6">
+                    <label for="pickup_time_slot" class="block text-sm font-medium text-gray-700 mb-1">Preferred Pickup Time</label>
+                    <select
+                        id="pickup_time_slot"
+                        name="pickup_time_slot"
+                        class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                        required
+                    >
+                        <option value="">Select Time Slot</option>
+                        <option value="morning" {{ old('pickup_time_slot', $shipment->pickup_time_slot) == 'morning' ? 'selected' : '' }}>Morning (8 AM - 12 PM)</option>
+                        <option value="afternoon" {{ old('pickup_time_slot', $shipment->pickup_time_slot) == 'afternoon' ? 'selected' : '' }}>Afternoon (12 PM - 4 PM)</option>
+                        <option value="evening" {{ old('pickup_time_slot', $shipment->pickup_time_slot) == 'evening' ? 'selected' : '' }}>Evening (4 PM - 7 PM)</option>
+                    </select>
+                    <p class="text-sm text-gray-500 mt-1">FedEx will pick up your package during the selected time window.</p>
                 </div>
 
                 <div class="mb-4">

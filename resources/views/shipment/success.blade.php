@@ -90,8 +90,25 @@
                 <div class="mt-4 p-4 bg-blue-50 rounded-lg">
                     <h4 class="font-medium text-blue-800 mb-2">Pickup Details</h4>
                     <ul class="text-sm text-blue-700 space-y-1">
-                        <li><span class="font-medium">Ready Time:</span> {{ $shipment->pickup_ready_time ? \Carbon\Carbon::parse($shipment->pickup_ready_time)->format('g:i A') : '9:00 AM' }}</li>
-                        <li><span class="font-medium">Close Time:</span> {{ $shipment->pickup_close_time ? \Carbon\Carbon::parse($shipment->pickup_close_time)->format('g:i A') : '5:00 PM' }}</li>
+                        <li><span class="font-medium">Pickup Time:</span>
+                            @if($shipment->pickup_time_slot)
+                                @switch($shipment->pickup_time_slot)
+                                    @case('morning')
+                                        Morning (8 AM - 12 PM)
+                                        @break
+                                    @case('afternoon')
+                                        Afternoon (12 PM - 4 PM)
+                                        @break
+                                    @case('evening')
+                                        Evening (4 PM - 7 PM)
+                                        @break
+                                    @default
+                                        {{ $shipment->pickup_ready_time ? \Carbon\Carbon::parse($shipment->pickup_ready_time)->format('g:i A') : '9:00 AM' }} - {{ $shipment->pickup_close_time ? \Carbon\Carbon::parse($shipment->pickup_close_time)->format('g:i A') : '5:00 PM' }}
+                                @endswitch
+                            @else
+                                {{ $shipment->pickup_ready_time ? \Carbon\Carbon::parse($shipment->pickup_ready_time)->format('g:i A') : '9:00 AM' }} - {{ $shipment->pickup_close_time ? \Carbon\Carbon::parse($shipment->pickup_close_time)->format('g:i A') : '5:00 PM' }}
+                            @endif
+                        </li>
                         <li><span class="font-medium">Location:</span> {{ $shipment->pickup_address ?: $shipment->sender_address_line }}</li>
                         @if($shipment->pickup_instructions)
                             <li><span class="font-medium">Instructions:</span> {{ $shipment->pickup_instructions }}</li>
@@ -156,12 +173,34 @@
                 <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                     <div>
                         <span class="text-gray-600">Weight:</span>
-                        <span class="font-medium ml-1">{{ $shipment->package_weight }} {{ $shipment->weight_unit ?? 'lbs' }}</span>
+                        <span class="font-medium ml-1">{{ $shipment->getTotalWeight() }} {{ $shipment->weight_unit ?? 'lbs' }}</span>
                     </div>
                     <div>
                         <span class="text-gray-600">Dimensions:</span>
-                        <span class="font-medium ml-1">{{ $shipment->package_length }}" × {{ $shipment->package_width }}" × {{ $shipment->package_height }}"</span>
+                        <span class="font-medium ml-1">
+                            @if($shipment->bag_type)
+                                @php $specs = $shipment->getBagSpecifications(); @endphp
+                                {{ $specs['dimensions'] }}
+                                @if($shipment->number_of_bags > 1)
+                                    ({{ $shipment->number_of_bags }} bags)
+                                @endif
+                            @else
+                                {{ $shipment->package_length }}" × {{ $shipment->package_width }}" × {{ $shipment->package_height }}"
+                            @endif
+                        </span>
                     </div>
+                    @if($shipment->bag_type)
+                    <div>
+                        <span class="text-gray-600">Bag Type:</span>
+                        <span class="font-medium ml-1">
+                            @php $specs = $shipment->getBagSpecifications(); @endphp
+                            {{ $specs['name'] }}
+                            @if($shipment->number_of_bags > 1)
+                                ({{ $shipment->number_of_bags }} bags)
+                            @endif
+                        </span>
+                    </div>
+                    @endif
                     <div>
                         <span class="text-gray-600">Volume:</span>
                         <span class="font-medium ml-1">{{ number_format($shipment->getPackageVolume(), 2) }} in³</span>
@@ -192,8 +231,23 @@
                             <h3 class="font-medium text-gray-900">Prepare Your Package</h3>
                             <p class="text-sm text-gray-600">
                                 Have your package ready for pickup on {{ $shipment->pickup_date ? \Carbon\Carbon::parse($shipment->pickup_date)->format('M j, Y') : $shipment->preferred_ship_date->format('M j, Y') }} between
-                                {{ $shipment->pickup_ready_time ? \Carbon\Carbon::parse($shipment->pickup_ready_time)->format('g:i A') : '9:00 AM' }} and
-                                {{ $shipment->pickup_close_time ? \Carbon\Carbon::parse($shipment->pickup_close_time)->format('g:i A') : '5:00 PM' }}.
+                                @if($shipment->pickup_time_slot)
+                                    @switch($shipment->pickup_time_slot)
+                                        @case('morning')
+                                            between 8:00 AM and 12:00 PM
+                                            @break
+                                        @case('afternoon')
+                                            between 12:00 PM and 4:00 PM
+                                            @break
+                                        @case('evening')
+                                            between 4:00 PM and 7:00 PM
+                                            @break
+                                        @default
+                                            {{ $shipment->pickup_ready_time ? \Carbon\Carbon::parse($shipment->pickup_ready_time)->format('g:i A') : '9:00 AM' }} and {{ $shipment->pickup_close_time ? \Carbon\Carbon::parse($shipment->pickup_close_time)->format('g:i A') : '5:00 PM' }}
+                                    @endswitch
+                                @else
+                                    {{ $shipment->pickup_ready_time ? \Carbon\Carbon::parse($shipment->pickup_ready_time)->format('g:i A') : '9:00 AM' }} and {{ $shipment->pickup_close_time ? \Carbon\Carbon::parse($shipment->pickup_close_time)->format('g:i A') : '5:00 PM' }}
+                                @endif.
                             </p>
                         </div>
                     </div>

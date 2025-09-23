@@ -112,7 +112,7 @@
                 <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                     <div>
                         <span class="text-gray-600">Service:</span>
-                        <span class="font-medium ml-1">{{ $shipment->selectedRate ? $shipment->selectedRate->getServiceDisplayName() : ucfirst($shipment->delivery_type) }}</span>
+                        <span class="font-medium ml-1">{{ $shipment->selectedRate ? $shipment->selectedRate->getServiceDisplayName() : 'Service Selected' }}</span>
                     </div>
                     <div>
                         <span class="text-gray-600">Weight:</span>

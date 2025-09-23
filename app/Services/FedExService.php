@@ -287,7 +287,7 @@ class FedExService
                         ]
                     ],
                     'shipDatestamp' => $shipment->preferred_ship_date->format('Y-m-d'),
-                    'serviceType' => $this->mapDeliveryTypeToService($shipment->delivery_type),
+                    'serviceType' => $shipment->selectedRate->service_type,
                     'packagingType' => 'YOUR_PACKAGING',
                     'pickupType' => $pickupType,
                     'shippingChargesPayment' => [
@@ -359,7 +359,7 @@ class FedExService
             Log::debug('FedEx shipment payload', [
                 'shipment_id' => $shipment->id,
                 'pickup_type' => $pickupType,
-                'service_type' => $this->mapDeliveryTypeToService($shipment->delivery_type),
+                'service_type' => $shipment->selectedRate->service_type,
                 'pickup_address' => $pickupAddress,
                 'recipient_address' => $recipientAddress,
                 'package_description' => $packageDescription,
@@ -653,8 +653,9 @@ class FedExService
                 'pickup_date' => $shipment->preferred_ship_date->format('Y-m-d')
             ]);
 
-            // Validate and limit package weight - convert to float and format
-            $weight = (float)min($shipment->package_weight, 150); // Max weight 150 lbs
+            // Use bag specifications if available, otherwise use manual weight
+            $packageWeight = $shipment->getTotalWeight();
+            $weight = (float)min($packageWeight, 150); // Max weight 150 lbs
             $formattedWeight = number_format($weight, 2);
 
             // Ensure we have valid address data
@@ -673,12 +674,28 @@ class FedExService
                 }
             }
 
-            // Format times according to FedEx documentation (ISO 8601 format)
-            $readyTime = $pickupDate->format('Y-m-d') . 'T09:00:00';
-            $closeTime = $pickupDate->format('Y-m-d') . 'T17:00:00';
+            // Format times according to FedEx documentation based on time slot
+            $timeSlot = $shipment->pickup_time_slot ?? 'morning';
+            switch ($timeSlot) {
+                case 'morning':
+                    $readyTime = $pickupDate->format('Y-m-d') . 'T08:00:00';
+                    $closeTime = $pickupDate->format('Y-m-d') . 'T12:00:00';
+                    break;
+                case 'afternoon':
+                    $readyTime = $pickupDate->format('Y-m-d') . 'T12:00:00';
+                    $closeTime = $pickupDate->format('Y-m-d') . 'T16:00:00';
+                    break;
+                case 'evening':
+                    $readyTime = $pickupDate->format('Y-m-d') . 'T16:00:00';
+                    $closeTime = $pickupDate->format('Y-m-d') . 'T19:00:00';
+                    break;
+                default:
+                    $readyTime = $pickupDate->format('Y-m-d') . 'T09:00:00';
+                    $closeTime = $pickupDate->format('Y-m-d') . 'T17:00:00';
+            }
 
             // Determine carrier code based on service type
-            $serviceType = $this->mapDeliveryTypeToService($shipment->delivery_type);
+            $serviceType = $shipment->selectedRate->service_type;
             $carrierCode = str_starts_with($serviceType, 'FEDEX_GROUND') ? 'FDXG' : 'FDXE';
 
             // Build payload according to FedEx Pickup API documentation
@@ -942,7 +959,7 @@ class FedExService
             }
 
             // Determine carrier code based on service type
-            $serviceType = $this->mapDeliveryTypeToService($shipment->delivery_type);
+            $serviceType = $shipment->selectedRate->service_type;
             $carrierCode = str_starts_with($serviceType, 'FEDEX_GROUND') ? 'FDXG' : 'FDXE';
 
             // Build payload according to FedEx Pickup Availability API
@@ -1112,7 +1129,7 @@ class FedExService
                         ]
                     ],
                     'shipDatestamp' => $shipment->preferred_ship_date->format('Y-m-d'),
-                    'serviceType' => $this->mapDeliveryTypeToService($shipment->delivery_type),
+                    'serviceType' => $shipment->selectedRate->service_type,
                     'packagingType' => 'YOUR_PACKAGING',
                     'pickupType' => $pickupType,
                     'shippingChargesPayment' => [

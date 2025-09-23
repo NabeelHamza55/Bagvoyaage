@@ -138,7 +138,7 @@
                         </div>
                         <div class="flex justify-between">
                             <span class="text-gray-600">Service:</span>
-                            <span class="font-medium">{{ $shipment->selectedRate ? $shipment->selectedRate->getServiceDisplayName() : ucfirst($shipment->delivery_type) }}</span>
+                            <span class="font-medium">{{ $shipment->selectedRate ? $shipment->selectedRate->getServiceDisplayName() : 'Service Selected' }}</span>
                         </div>
                         <div class="flex justify-between">
                             <span class="text-gray-600">Method:</span>
