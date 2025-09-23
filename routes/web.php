@@ -45,3 +45,40 @@ Route::get('/webhook/status', [App\Http\Controllers\WebhookController::class, 's
 
 // Utility routes
 Route::get('/cities/{state}', [ShipmentController::class, 'getCities'])->name('cities.by.state');
+
+// Development route to rewrite all migrations
+Route::get('/migrations/rewrite', function () {
+    try {
+        // Drop all tables
+        \Illuminate\Support\Facades\Artisan::call('migrate:fresh', [
+            '--force' => true
+        ]);
+
+        // Run all migrations
+        \Illuminate\Support\Facades\Artisan::call('migrate', [
+            '--force' => true
+        ]);
+
+        // Run seeders if they exist
+        try {
+            \Illuminate\Support\Facades\Artisan::call('db:seed', [
+                '--force' => true
+            ]);
+        } catch (\Exception $e) {
+            // Seeders might not exist, that's okay
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'All migrations have been rewritten successfully',
+            'timestamp' => now()->toDateTimeString()
+        ]);
+
+    } catch (\Exception $e) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Error rewriting migrations: ' . $e->getMessage(),
+            'timestamp' => now()->toDateTimeString()
+        ], 500);
+    }
+})->name('dev.rewrite.migrations');
