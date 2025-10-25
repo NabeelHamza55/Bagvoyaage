@@ -2,7 +2,7 @@
 
 @section('content')
 <div style="text-align: center; margin-bottom: 32px;">
-    <div class="status-badge status-confirmed">Order Confirmed</div>
+    <div class="status-badge status-label">Shipping Label Ready</div>
 </div>
 
 <h2 style="color: #1f2937; font-size: 24px; font-weight: 700; margin: 0 0 16px 0;">
@@ -10,7 +10,7 @@
 </h2>
 
 <p style="margin: 0 0 24px 0; font-size: 16px; line-height: 1.6;">
-    Great news! Your international shipping order has been confirmed and is being processed. We'll notify you as soon as your shipping label is ready and when your package is picked up.
+    Your shipping label is ready! Please print the attached label and affix it to your package. Your shipment is ready to be picked up or dropped off.
 </p>
 
 <div class="shipping-details">
@@ -24,30 +24,21 @@
     </div>
 
     <div class="detail-row">
-        <span class="detail-label">Origin:</span>
-        <span class="detail-value">{{ $shipment->origin_country }}</span>
-    </div>
-
-    <div class="detail-row">
-        <span class="detail-label">Destination:</span>
-        <span class="detail-value">{{ $shipment->destination_country }}</span>
-    </div>
-
-    <div class="detail-row">
         <span class="detail-label">Service Type:</span>
-        <span class="detail-value">{{ $shipment->service_type ?? 'FedEx International' }}</span>
+        <span class="detail-value">{{ $shipment->selectedRate->service_type ?? 'FedEx Service' }}</span>
     </div>
 
+    @if($shipment->pickup_type === 'PICKUP')
     <div class="detail-row">
-        <span class="detail-label">Delivery Option:</span>
-        <span class="detail-value">{{ ucfirst($shipment->delivery_option) }}</span>
+        <span class="detail-label">Pickup Date:</span>
+        <span class="detail-value">{{ $shipment->pickup_date ? \Carbon\Carbon::parse($shipment->pickup_date)->format('F j, Y') : 'Scheduled' }}</span>
     </div>
-
-    @if($shipment->estimated_delivery_date)
+    @if($shipment->pickup_confirmation)
     <div class="detail-row">
-        <span class="detail-label">Estimated Delivery:</span>
-        <span class="detail-value">{{ \Carbon\Carbon::parse($shipment->estimated_delivery_date)->format('F j, Y') }}</span>
+        <span class="detail-label">Pickup Confirmation:</span>
+        <span class="detail-value">{{ $shipment->pickup_confirmation }}</span>
     </div>
+    @endif
     @endif
 </div>
 
@@ -57,11 +48,9 @@
     </h3>
     <div style="background-color: #f9fafb; padding: 16px; border-radius: 8px; border: 1px solid #e5e7eb;">
         <p style="margin: 0; font-size: 14px; line-height: 1.5;">
-            <strong>{{ $shipment->sender_name }}</strong><br>
-            {{ $shipment->sender_company ? $shipment->sender_company . '<br>' : '' }}
-            {{ $shipment->sender_address }}<br>
-            {{ $shipment->sender_city }}, {{ $shipment->sender_state }} {{ $shipment->sender_postal_code }}<br>
-            {{ $shipment->sender_country }}<br>
+            <strong>{{ $shipment->sender_full_name }}</strong><br>
+            {{ $shipment->sender_address_line }}<br>
+            {{ $shipment->sender_city }}, {{ $shipment->sender_state }} {{ $shipment->sender_zipcode }}<br>
             {{ $shipment->sender_phone }}<br>
             {{ $shipment->sender_email }}
         </p>
@@ -75,12 +64,9 @@
     <div style="background-color: #f9fafb; padding: 16px; border-radius: 8px; border: 1px solid #e5e7eb;">
         <p style="margin: 0; font-size: 14px; line-height: 1.5;">
             <strong>{{ $shipment->recipient_name }}</strong><br>
-            {{ $shipment->recipient_company ? $shipment->recipient_company . '<br>' : '' }}
             {{ $shipment->recipient_address }}<br>
             {{ $shipment->recipient_city }}, {{ $shipment->recipient_state }} {{ $shipment->recipient_postal_code }}<br>
-            {{ $shipment->recipient_country }}<br>
-            {{ $shipment->recipient_phone }}<br>
-            {{ $shipment->recipient_email }}
+            {{ $shipment->recipient_phone }}
         </p>
     </div>
 </div>
@@ -92,26 +78,26 @@
     <div style="background-color: #f9fafb; padding: 16px; border-radius: 8px; border: 1px solid #e5e7eb;">
         <div class="detail-row">
             <span class="detail-label">Weight:</span>
-            <span class="detail-value">{{ $shipment->weight }} {{ $shipment->weight_unit }}</span>
+            <span class="detail-value">{{ $shipment->package_weight }} {{ $shipment->weight_unit }}</span>
         </div>
         <div class="detail-row">
             <span class="detail-label">Dimensions:</span>
-            <span class="detail-value">{{ $shipment->length }} × {{ $shipment->width }} × {{ $shipment->height }} {{ $shipment->dimension_unit }}</span>
+            <span class="detail-value">{{ $shipment->package_length }} × {{ $shipment->package_width }} × {{ $shipment->package_height }} {{ $shipment->dimension_unit }}</span>
         </div>
         <div class="detail-row">
             <span class="detail-label">Package Type:</span>
-            <span class="detail-value">{{ ucfirst($shipment->package_type) }}</span>
+            <span class="detail-value">{{ ucfirst($shipment->packaging_type ?? 'Your Packaging') }}</span>
         </div>
         @if($shipment->declared_value)
         <div class="detail-row">
             <span class="detail-label">Declared Value:</span>
-            <span class="detail-value">${{ number_format($shipment->declared_value, 2) }} {{ $shipment->currency ?? 'USD' }}</span>
+            <span class="detail-value">${{ number_format($shipment->declared_value, 2) }} {{ $shipment->currency_code ?? 'USD' }}</span>
         </div>
         @endif
-        @if($shipment->contents_description)
+        @if($shipment->package_description)
         <div class="detail-row">
-            <span class="detail-label">Contents:</span>
-            <span class="detail-value">{{ $shipment->contents_description }}</span>
+            <span class="detail-label">Description:</span>
+            <span class="detail-value">{{ $shipment->package_description }}</span>
         </div>
         @endif
     </div>
@@ -125,17 +111,17 @@
 
 <div style="background-color: #f3f4f6; padding: 20px; border-radius: 8px; margin: 32px 0;">
     <h4 style="color: #374151; font-size: 16px; font-weight: 600; margin: 0 0 12px 0;">
-        What happens next?
+        Next Steps
     </h4>
     <ul style="margin: 0; padding-left: 20px; color: #6b7280;">
-        <li style="margin-bottom: 8px;">We'll process your shipment and generate the shipping label</li>
-        <li style="margin-bottom: 8px;">You'll receive an email with the shipping label attached</li>
-        @if($shipment->delivery_option === 'pickup')
-        <li style="margin-bottom: 8px;">FedEx will schedule a pickup at your specified address</li>
+        <li style="margin-bottom: 8px;">Print the attached shipping label</li>
+        <li style="margin-bottom: 8px;">Securely attach the label to your package</li>
+        @if($shipment->pickup_type === 'PICKUP')
+        <li style="margin-bottom: 8px;">Have your package ready for pickup on the scheduled date</li>
         @else
-        <li style="margin-bottom: 8px;">You can drop off your package at any FedEx location</li>
+        <li style="margin-bottom: 8px;">Drop off your package at any FedEx location</li>
         @endif
-        <li style="margin-bottom: 8px;">We'll send you tracking updates as your package moves</li>
+        <li style="margin-bottom: 8px;">Keep your tracking number for reference</li>
     </ul>
 </div>
 

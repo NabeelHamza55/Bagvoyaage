@@ -39,7 +39,8 @@
             <div class="flex flex-col sm:flex-row gap-4 justify-center mb-6">
                 @php
                     $fedexResponse = json_decode($shipment->fedex_response, true);
-                    $hasLabel = isset($fedexResponse['label_url']) && !empty($fedexResponse['label_url']);
+                    $localLabelPath = storage_path("app/public/labels/{$shipment->id}.pdf");
+                    $hasLabel = file_exists($localLabelPath) || (isset($fedexResponse['label_url']) && !empty($fedexResponse['label_url']));
                 @endphp
 
                 @if($hasLabel)

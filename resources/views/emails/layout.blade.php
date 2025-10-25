@@ -216,7 +216,7 @@
 
             <p style="margin: 0 0 16px 0; color: #6b7280; font-size: 14px;">
                 Questions? Contact us at
-                <a href="mailto:support@bagvoyage.com" style="color: #667eea;">support@bagvoyage.com</a>
+                <a href="mailto:support@bagvoyaage.org" style="color: #667eea;">support@bagvoyaage.org</a>
                 or call +1 (555) 123-4567
             </p>
 

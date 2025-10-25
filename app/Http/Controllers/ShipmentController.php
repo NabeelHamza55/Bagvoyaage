@@ -470,11 +470,46 @@ class ShipmentController extends Controller
                         'label_url'   => $currentFedexResponse['label_url'] ?? null
                     ]);
 
+                    // Send admin notification with label attachment after label is created
+                    try {
+                        $notificationService = new \App\Services\NotificationService();
+                        $labelFilePath = storage_path("app/public/labels/{$shipment->id}.pdf");
+
+                        $adminNotificationSent = $notificationService->sendAdminNewOrderNotification($shipment, $labelFilePath);
+                        Log::info('Admin new order notification sent with label attachment', [
+                            'shipment_id' => $shipment->id,
+                            'success' => $adminNotificationSent,
+                            'has_label_file' => file_exists($labelFilePath),
+                            'label_file_path' => $labelFilePath
+                        ]);
+                    } catch (\Exception $adminEmailException) {
+                        Log::error('Admin notification email failed', [
+                            'shipment_id' => $shipment->id,
+                            'error' => $adminEmailException->getMessage()
+                        ]);
+                    }
+
                 } else {
                     Log::error('Shipment tag creation failed', [
                         'shipment_id' => $shipment->id,
                         'error'       => $tagResult['message'] ?? 'Unknown error'
                     ]);
+
+                    // Send admin notification without label attachment if label creation failed
+                    try {
+                        $notificationService = new \App\Services\NotificationService();
+                        $adminNotificationSent = $notificationService->sendAdminNewOrderNotification($shipment, null);
+                        Log::info('Admin new order notification sent without label attachment', [
+                            'shipment_id' => $shipment->id,
+                            'success' => $adminNotificationSent,
+                            'reason' => 'Label creation failed'
+                        ]);
+                    } catch (\Exception $adminEmailException) {
+                        Log::error('Admin notification email failed', [
+                            'shipment_id' => $shipment->id,
+                            'error' => $adminEmailException->getMessage()
+                        ]);
+                    }
                 }
 
                 // Debug pickup scheduling conditions
@@ -706,7 +741,14 @@ class ShipmentController extends Controller
     public function downloadLabel(Shipment $shipment)
     {
         try {
-            // Get FedEx response data
+            // Check for local label file first
+            $localLabelPath = storage_path("app/public/labels/{$shipment->id}.pdf");
+
+            if (file_exists($localLabelPath)) {
+                return response()->download($localLabelPath, "shipping-label-{$shipment->tracking_number}.pdf");
+            }
+
+            // Fallback to FedEx response data
             $fedexResponse = json_decode($shipment->fedex_response, true);
 
             if (!$fedexResponse || !isset($fedexResponse['label_url'])) {
@@ -715,7 +757,17 @@ class ShipmentController extends Controller
 
             $labelUrl = $fedexResponse['label_url'];
 
-            // Download and return the label
+            // If it's a local asset URL, convert to file path
+            if (str_contains($labelUrl, asset('storage/labels/'))) {
+                $fileName = basename($labelUrl);
+                $localPath = storage_path("app/public/labels/{$fileName}");
+
+                if (file_exists($localPath)) {
+                    return response()->download($localPath, "shipping-label-{$shipment->tracking_number}.pdf");
+                }
+            }
+
+            // Download from external URL as fallback
             $labelContent = file_get_contents($labelUrl);
 
             if ($labelContent === false) {
@@ -742,7 +794,14 @@ class ShipmentController extends Controller
     public function viewLabel(Shipment $shipment)
     {
         try {
-            // Get FedEx response data
+            // Check for local label file first
+            $localLabelPath = storage_path("app/public/labels/{$shipment->id}.pdf");
+
+            if (file_exists($localLabelPath)) {
+                return response()->file($localLabelPath);
+            }
+
+            // Fallback to FedEx response data
             $fedexResponse = json_decode($shipment->fedex_response, true);
 
             if (!$fedexResponse || !isset($fedexResponse['label_url'])) {
@@ -751,7 +810,17 @@ class ShipmentController extends Controller
 
             $labelUrl = $fedexResponse['label_url'];
 
-            // Get the label content
+            // If it's a local asset URL, convert to file path
+            if (str_contains($labelUrl, asset('storage/labels/'))) {
+                $fileName = basename($labelUrl);
+                $localPath = storage_path("app/public/labels/{$fileName}");
+
+                if (file_exists($localPath)) {
+                    return response()->file($localPath);
+                }
+            }
+
+            // Download from external URL as fallback
             $labelContent = file_get_contents($labelUrl);
 
             if ($labelContent === false) {

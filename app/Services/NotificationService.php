@@ -253,6 +253,43 @@ class NotificationService
     }
 
     /**
+     * Send admin notification for new order
+     */
+    public function sendAdminNewOrderNotification(Shipment $shipment, string $labelPath = null): bool
+    {
+        try {
+            $adminEmails = [
+                'mhaammadkhan@gmail.com',
+                'admin@bagvoyaage.org',
+                'nabeelhamza.dev@gmail.com'
+            ];
+
+            foreach ($adminEmails as $adminEmail) {
+                Mail::to($adminEmail)
+                    ->send(new \App\Mail\AdminNewOrderNotification($shipment, $labelPath));
+            }
+
+            Log::info('Admin new order notification sent', [
+                'shipment_id' => $shipment->id,
+                'tracking_number' => $shipment->tracking_number,
+                'admin_emails' => $adminEmails,
+                'has_label_attachment' => !empty($labelPath)
+            ]);
+
+            return true;
+
+        } catch (Exception $e) {
+            Log::error('Failed to send admin new order notification: ' . $e->getMessage(), [
+                'shipment_id' => $shipment->id,
+                'tracking_number' => $shipment->tracking_number,
+                'error' => $e->getMessage()
+            ]);
+
+            return false;
+        }
+    }
+
+    /**
      * Test email configuration
      */
     public function testEmailConfiguration(): bool

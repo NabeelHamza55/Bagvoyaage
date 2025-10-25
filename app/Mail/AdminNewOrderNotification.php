@@ -12,21 +12,19 @@ use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Attachment;
 use Illuminate\Queue\SerializesModels;
 
-class ShippingNotification extends Mailable implements ShouldQueue
+class AdminNewOrderNotification extends Mailable implements ShouldQueue
 {
     use Queueable, SerializesModels;
 
     public $shipment;
-    public $type;
     public $attachmentPath;
 
     /**
      * Create a new message instance.
      */
-    public function __construct(Shipment $shipment, string $type = 'confirmation', ?string $attachmentPath = null)
+    public function __construct(Shipment $shipment, ?string $attachmentPath = null)
     {
         $this->shipment = $shipment;
-        $this->type = $type;
         $this->attachmentPath = $attachmentPath;
     }
 
@@ -35,19 +33,9 @@ class ShippingNotification extends Mailable implements ShouldQueue
      */
     public function envelope(): Envelope
     {
-        $subject = match($this->type) {
-            'confirmation' => 'Shipping Order Confirmed - ' . $this->shipment->tracking_number,
-            'label' => 'Shipping Label Ready - ' . $this->shipment->tracking_number,
-            'pickup_scheduled' => 'Pickup Scheduled - ' . $this->shipment->tracking_number,
-            'shipped' => 'Package Shipped - ' . $this->shipment->tracking_number,
-            'delivered' => 'Package Delivered - ' . $this->shipment->tracking_number,
-            'exception' => 'Shipping Update - ' . $this->shipment->tracking_number,
-            default => 'Shipping Update - ' . $this->shipment->tracking_number,
-        };
-
         return new Envelope(
-            from: new Address('no-reply@bagvoyaage.org', 'BagVoyage Shipping'),
-            subject: $subject,
+            from: new Address('no-reply@bagvoyaage.org', 'BagVoyage Admin'),
+            subject: 'New Order Alert - Order #' . $this->shipment->id . ' - ' . $this->shipment->tracking_number,
         );
     }
 
@@ -56,22 +44,11 @@ class ShippingNotification extends Mailable implements ShouldQueue
      */
     public function content(): Content
     {
-        $view = match($this->type) {
-            'confirmation' => 'emails.shipping.confirmation',
-            'label' => 'emails.shipping.label',
-            'pickup_scheduled' => 'emails.shipping.pickup_scheduled',
-            'shipped' => 'emails.shipping.shipped',
-            'delivered' => 'emails.shipping.delivered',
-            'exception' => 'emails.shipping.exception',
-            default => 'emails.shipping.general',
-        };
-
         return new Content(
-            view: $view,
+            view: 'emails.admin.new_order',
             with: [
                 'shipment' => $this->shipment,
-                'type' => $this->type,
-                'customerName' => $this->shipment->sender_name,
+                'customerName' => $this->shipment->sender_full_name,
                 'trackingNumber' => $this->shipment->tracking_number,
                 'trackingUrl' => route('shipment.track', $this->shipment->tracking_number),
             ],

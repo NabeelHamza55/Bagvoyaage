@@ -66,7 +66,7 @@
             <div class="mt-6 pt-6 border-t border-gray-200">
                 <p class="text-sm text-gray-600">
                     If you encountered any issues during the payment process or have questions about your shipment,
-                    please contact our support team at <a href="mailto:support@bagvoyage.com" class="text-indigo-600 hover:text-indigo-500">support@bagvoyage.com</a>.
+                    please contact our support team at <a href="mailto:support@bagvoyaage.org" class="text-indigo-600 hover:text-indigo-500">support@bagvoyaage.org</a>.
                 </p>
             </div>
         </div>

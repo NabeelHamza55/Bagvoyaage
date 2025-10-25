@@ -323,6 +323,54 @@ class FedExServiceFixed
                     'document_encoding' => !empty($documentEncoding) ? 'base64' : 'none'
                 ]);
 
+                // Send email notifications after successful shipment creation
+                try {
+                    $notificationService = new \App\Services\NotificationService();
+
+                    // Send shipping confirmation email to customer
+                    $confirmationSent = $notificationService->sendShippingConfirmation($shipment);
+                    Log::info('Shipping confirmation email sent', [
+                        'shipment_id' => $shipment->id,
+                        'success' => $confirmationSent
+                    ]);
+
+                    // Determine the local file path for the label
+                    $labelFilePath = null;
+
+                    if (!empty($documentEncoding)) {
+                        // Save base64 label to local file
+                        $labelsDir = storage_path("app/public/labels");
+                        if (!file_exists($labelsDir)) {
+                            mkdir($labelsDir, 0755, true);
+                        }
+                        $labelFilePath = $labelsDir . "/{$shipment->id}.pdf";
+                        file_put_contents($labelFilePath, base64_decode($documentEncoding));
+                    } elseif (!empty($labelUrl) && str_contains($labelUrl, asset('storage/labels/'))) {
+                        // Convert asset URL to local file path
+                        $fileName = basename($labelUrl);
+                        $labelFilePath = storage_path("app/public/labels/{$fileName}");
+                    }
+
+                    // Send shipping label email to customer if label is available
+                    if (!empty($labelUrl) || !empty($documentEncoding)) {
+                        $labelSent = $notificationService->sendShippingLabel($shipment, $labelFilePath);
+                        Log::info('Shipping label email sent to customer', [
+                            'shipment_id' => $shipment->id,
+                            'success' => $labelSent,
+                            'has_label_file' => !empty($labelFilePath),
+                            'label_file_path' => $labelFilePath
+                        ]);
+                    }
+
+                } catch (\Exception $emailException) {
+                    // Log email errors but don't fail the shipment creation
+                    Log::error('Email notification failed after shipment creation', [
+                        'shipment_id' => $shipment->id,
+                        'error' => $emailException->getMessage(),
+                        'tracking_number' => $trackingNumber
+                    ]);
+                }
+
                 return [
                     'success' => true,
                     'tracking_number' => $trackingNumber,
