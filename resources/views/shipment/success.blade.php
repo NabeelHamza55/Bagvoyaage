@@ -3,6 +3,77 @@
 @section('title', 'Payment Successful - BagVoyage')
 
 @section('content')
+<style>
+/* Custom CSS for Hostinger compatibility */
+.btn-primary {
+    display: inline-block;
+    background-color: #4f46e5;
+    color: white;
+    padding: 12px 24px;
+    border-radius: 6px;
+    font-weight: 500;
+    text-decoration: none;
+    margin: 4px;
+    transition: background-color 0.2s;
+    border: none;
+    cursor: pointer;
+}
+
+.btn-primary:hover {
+    background-color: #4338ca;
+    color: white;
+    text-decoration: none;
+}
+
+.btn-success {
+    display: inline-block;
+    background-color: #10b981;
+    color: white;
+    padding: 12px 24px;
+    border-radius: 6px;
+    font-weight: 500;
+    text-decoration: none;
+    margin: 4px;
+    transition: background-color 0.2s;
+    border: none;
+    cursor: pointer;
+}
+
+.btn-success:hover {
+    background-color: #059669;
+    color: white;
+    text-decoration: none;
+}
+
+.btn-info {
+    display: inline-block;
+    background-color: #3b82f6;
+    color: white;
+    padding: 12px 24px;
+    border-radius: 6px;
+    font-weight: 500;
+    text-decoration: none;
+    margin: 4px;
+    transition: background-color 0.2s;
+    border: none;
+    cursor: pointer;
+}
+
+.btn-info:hover {
+    background-color: #2563eb;
+    color: white;
+    text-decoration: none;
+}
+
+/* Ensure buttons are visible and clickable */
+a[href] {
+    text-decoration: none !important;
+}
+
+a[href]:hover {
+    text-decoration: none !important;
+}
+</style>
 <div class="py-12 bg-gray-50">
     <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
         <!-- Success Header -->
@@ -39,15 +110,23 @@
             <div class="flex flex-col sm:flex-row gap-4 justify-center mb-6">
                 @php
                     $fedexResponse = json_decode($shipment->fedex_response, true);
-                    $localLabelPath = storage_path("app/public/labels/{$shipment->id}.pdf");
-                    $hasLabel = file_exists($localLabelPath) || (isset($fedexResponse['label_url']) && !empty($fedexResponse['label_url']));
+                    $publicLabelPath = public_path("storage/labels/{$shipment->id}.pdf");
+                    $hasLabel = file_exists($publicLabelPath) || (isset($fedexResponse['label_url']) && !empty($fedexResponse['label_url']));
                 @endphp
 
                 @if($hasLabel)
-                    <a href="{{ route('shipment.label.view', $shipment) }}" target="_blank" class="bg-green-500 text-white px-6 py-3 rounded-md font-medium hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2">
+                    <a href="{{ route('shipment.label.view', $shipment) }}" target="_blank"
+                       class="btn-success"
+                       style="display: inline-block; background-color: #10b981; color: white; padding: 12px 24px; border-radius: 6px; font-weight: 500; text-decoration: none; margin: 4px; transition: background-color 0.2s;"
+                       onmouseover="this.style.backgroundColor='#059669'"
+                       onmouseout="this.style.backgroundColor='#10b981'">
                         View Label
                     </a>
-                    <a href="{{ route('shipment.label.download', $shipment) }}" class="bg-blue-500 text-white px-6 py-3 rounded-md font-medium hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">
+                    <a href="{{ route('shipment.label.download', $shipment) }}"
+                       class="btn-info"
+                       style="display: inline-block; background-color: #3b82f6; color: white; padding: 12px 24px; border-radius: 6px; font-weight: 500; text-decoration: none; margin: 4px; transition: background-color 0.2s;"
+                       onmouseover="this.style.backgroundColor='#2563eb'"
+                       onmouseout="this.style.backgroundColor='#3b82f6'">
                         Download Label
                     </a>
                 @endif
@@ -60,7 +139,11 @@
             </div>
 
             <div class="flex flex-col sm:flex-row gap-4 justify-center">
-                <a href="{{ route('home') }}" class="bg-indigo-600 text-white px-6 py-3 rounded-md font-medium hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2">
+                <a href="{{ route('home') }}"
+                   class="btn-primary"
+                   style="display: inline-block; background-color: #4f46e5; color: white; padding: 12px 24px; border-radius: 6px; font-weight: 500; text-decoration: none; margin: 4px; transition: background-color 0.2s;"
+                   onmouseover="this.style.backgroundColor='#4338ca'"
+                   onmouseout="this.style.backgroundColor='#4f46e5'">
                     Ship Another Package
                 </a>
                 {{-- @if($shipment->tracking_number)

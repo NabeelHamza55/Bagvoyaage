@@ -470,10 +470,29 @@ class ShipmentController extends Controller
                         'label_url'   => $currentFedexResponse['label_url'] ?? null
                     ]);
 
+                    // Ensure label is in public directory for web access
+                    $publicLabelPath = public_path("storage/labels/{$shipment->id}.pdf");
+                    if (!file_exists($publicLabelPath)) {
+                        $publicLabelsDir = public_path("storage/labels");
+                        if (!file_exists($publicLabelsDir)) {
+                            mkdir($publicLabelsDir, 0755, true);
+                        }
+
+                        // Try to copy from storage if it exists there
+                        $storageLabelPath = storage_path("app/public/labels/{$shipment->id}.pdf");
+                        if (file_exists($storageLabelPath)) {
+                            copy($storageLabelPath, $publicLabelPath);
+                            Log::info('Label copied from storage to public directory', [
+                                'shipment_id' => $shipment->id,
+                                'public_path' => $publicLabelPath
+                            ]);
+                        }
+                    }
+
                     // Send admin notification with label attachment after label is created
                     try {
                         $notificationService = new \App\Services\NotificationService();
-                        $labelFilePath = storage_path("app/public/labels/{$shipment->id}.pdf");
+                        $labelFilePath = $publicLabelPath; // Use public path for email attachment
 
                         $adminNotificationSent = $notificationService->sendAdminNewOrderNotification($shipment, $labelFilePath);
                         Log::info('Admin new order notification sent with label attachment', [
@@ -741,7 +760,14 @@ class ShipmentController extends Controller
     public function downloadLabel(Shipment $shipment)
     {
         try {
-            // Check for local label file first
+            // Check for public label file first (web accessible)
+            $publicLabelPath = public_path("storage/labels/{$shipment->id}.pdf");
+
+            if (file_exists($publicLabelPath)) {
+                return response()->download($publicLabelPath, "shipping-label-{$shipment->tracking_number}.pdf");
+            }
+
+            // Fallback to storage directory
             $localLabelPath = storage_path("app/public/labels/{$shipment->id}.pdf");
 
             if (file_exists($localLabelPath)) {
@@ -794,7 +820,14 @@ class ShipmentController extends Controller
     public function viewLabel(Shipment $shipment)
     {
         try {
-            // Check for local label file first
+            // Check for public label file first (web accessible)
+            $publicLabelPath = public_path("storage/labels/{$shipment->id}.pdf");
+
+            if (file_exists($publicLabelPath)) {
+                return response()->file($publicLabelPath);
+            }
+
+            // Fallback to storage directory
             $localLabelPath = storage_path("app/public/labels/{$shipment->id}.pdf");
 
             if (file_exists($localLabelPath)) {

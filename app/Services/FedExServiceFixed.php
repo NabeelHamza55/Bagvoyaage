@@ -338,13 +338,21 @@ class FedExServiceFixed
                     $labelFilePath = null;
 
                     if (!empty($documentEncoding)) {
-                        // Save base64 label to local file
-                        $labelsDir = storage_path("app/public/labels");
-                        if (!file_exists($labelsDir)) {
-                            mkdir($labelsDir, 0755, true);
+                        // Save base64 label directly to public directory for web access
+                        $publicLabelsDir = public_path("storage/labels");
+                        if (!file_exists($publicLabelsDir)) {
+                            mkdir($publicLabelsDir, 0755, true);
                         }
-                        $labelFilePath = $labelsDir . "/{$shipment->id}.pdf";
+                        $labelFilePath = $publicLabelsDir . "/{$shipment->id}.pdf";
                         file_put_contents($labelFilePath, base64_decode($documentEncoding));
+
+                        // Also save to storage for backup
+                        $storageLabelsDir = storage_path("app/public/labels");
+                        if (!file_exists($storageLabelsDir)) {
+                            mkdir($storageLabelsDir, 0755, true);
+                        }
+                        $storageLabelPath = $storageLabelsDir . "/{$shipment->id}.pdf";
+                        copy($labelFilePath, $storageLabelPath);
                     } elseif (!empty($labelUrl) && str_contains($labelUrl, asset('storage/labels/'))) {
                         // Convert asset URL to local file path
                         $fileName = basename($labelUrl);
