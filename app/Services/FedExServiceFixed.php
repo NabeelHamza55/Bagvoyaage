@@ -1482,16 +1482,55 @@ class FedExServiceFixed
                 ]
             ];
 
+            // Log the shipping rates payload
+            Log::info('FedEx Shipping Rates Request Payload', [
+                'shipment_id' => $shipment->id,
+                'endpoint' => $this->baseUrl . '/rate/v1/rates/quotes',
+                'payload' => $payload,
+                'payload_json' => json_encode($payload, JSON_PRETTY_PRINT),
+                'payload_size' => strlen(json_encode($payload)),
+                'dimensions' => $dimensions,
+                'shipment_details' => [
+                    'sender_zipcode' => $shipment->sender_zipcode,
+                    'sender_state' => $shipment->sender_state,
+                    'recipient_postal_code' => $shipment->recipient_postal_code,
+                    'recipient_state' => $shipment->recipient_state,
+                    'weight_unit' => $shipment->weight_unit,
+                    'dimension_unit' => $shipment->dimension_unit
+                ]
+            ]);
+
             $response = Http::withHeaders([
                 'Authorization' => 'Bearer ' . $token,
                 'Content-Type' => 'application/json'
             ])->post($this->baseUrl . '/rate/v1/rates/quotes', $payload);
 
             if ($response->successful()) {
-                return $this->processRateResponse($shipment, $response->json());
+                $responseData = $response->json();
+                
+                // Log successful response
+                Log::info('FedEx Shipping Rates Response', [
+                    'shipment_id' => $shipment->id,
+                    'status_code' => $response->status(),
+                    'response_keys' => array_keys($responseData),
+                    'has_rate_reply_details' => isset($responseData['output']['rateReplyDetails']),
+                    'rate_count' => isset($responseData['output']['rateReplyDetails']) 
+                        ? count($responseData['output']['rateReplyDetails']) 
+                        : 0,
+                    'response_data' => $responseData
+                ]);
+                
+                return $this->processRateResponse($shipment, $responseData);
             }
 
-            Log::error('FedEx Rate API Error: ' . $response->body());
+            // Log error response
+            Log::error('FedEx Rate API Error', [
+                'shipment_id' => $shipment->id,
+                'status_code' => $response->status(),
+                'response_body' => $response->body(),
+                'response_json' => $response->json()
+            ]);
+            
             throw new Exception('Failed to get FedEx rates: ' . $response->body());
         } catch (Exception $e) {
             Log::error('FedEx Rate Error: ' . $e->getMessage());

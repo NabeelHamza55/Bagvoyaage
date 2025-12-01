@@ -16,12 +16,67 @@ class PayPalService
 
     public function __construct()
     {
-        $this->baseUrl = config('services.paypal.mode') === 'live'
+        // Read mode from config (which reads from env PAYPAL_MODE)
+        // Default to 'sandbox' if not set
+        $mode = strtolower(config('services.paypal.mode', 'sandbox'));
+
+        // Set base URL based on mode (URLs stay in code as they should)
+        $this->baseUrl = $mode === 'live'
             ? 'https://api.paypal.com'
             : 'https://api.sandbox.paypal.com';
 
         $this->clientId = config('services.paypal.client_id');
         $this->clientSecret = config('services.paypal.client_secret');
+
+        // Log credentials being used (safely - only show prefix and length)
+        $clientIdPrefix = $this->clientId ? substr($this->clientId, 0, 10) . '...' : 'NOT SET';
+        $clientSecretPrefix = $this->clientSecret ? substr($this->clientSecret, 0, 10) . '...' : 'NOT SET';
+
+        Log::info('PayPal service initialized - Credentials being used', [
+            'mode' => $mode,
+            'base_url' => $this->baseUrl,
+            'mode_from_env' => env('PAYPAL_MODE', 'not set'),
+            'credentials' => [
+                'client_id' => [
+                    'present' => !empty($this->clientId),
+                    'prefix' => $clientIdPrefix,
+                    'length' => $this->clientId ? strlen($this->clientId) : 0,
+                    'source' => [
+                        'env_set' => env('PAYPAL_CLIENT_ID') ? 'yes' : 'no',
+                        'config_set' => config('services.paypal.client_id') ? 'yes' : 'no',
+                        'env_value_prefix' => env('PAYPAL_CLIENT_ID') ? substr(env('PAYPAL_CLIENT_ID'), 0, 10) . '...' : 'not set',
+                        'config_value_prefix' => config('services.paypal.client_id') ? substr(config('services.paypal.client_id'), 0, 10) . '...' : 'not set'
+                    ]
+                ],
+                'client_secret' => [
+                    'present' => !empty($this->clientSecret),
+                    'prefix' => $clientSecretPrefix,
+                    'length' => $this->clientSecret ? strlen($this->clientSecret) : 0,
+                    'source' => [
+                        'env_set' => env('PAYPAL_CLIENT_SECRET') ? 'yes' : 'no',
+                        'config_set' => config('services.paypal.client_secret') ? 'yes' : 'no',
+                        'env_value_prefix' => env('PAYPAL_CLIENT_SECRET') ? substr(env('PAYPAL_CLIENT_SECRET'), 0, 10) . '...' : 'not set',
+                        'config_value_prefix' => config('services.paypal.client_secret') ? substr(config('services.paypal.client_secret'), 0, 10) . '...' : 'not set'
+                    ]
+                ]
+            ],
+            'warning' => (empty($this->clientId) || empty($this->clientSecret))
+                ? 'PayPal credentials are missing! Check your .env file for PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET'
+                : 'Credentials loaded successfully'
+        ]);
+
+        // Warn if credentials are missing
+        if (empty($this->clientId) || empty($this->clientSecret)) {
+            Log::warning('PayPal credentials are not configured', [
+                'base_url' => $this->baseUrl,
+                'mode' => $mode,
+                'env_paypal_mode' => env('PAYPAL_MODE'),
+                'env_paypal_client_id' => env('PAYPAL_CLIENT_ID') ? 'set' : 'not set',
+                'env_paypal_client_secret' => env('PAYPAL_CLIENT_SECRET') ? 'set' : 'not set',
+                'config_paypal_client_id' => config('services.paypal.client_id') ? 'set' : 'not set',
+                'config_paypal_client_secret' => config('services.paypal.client_secret') ? 'set' : 'not set'
+            ]);
+        }
     }
 
     /**
@@ -36,8 +91,28 @@ class PayPalService
         try {
             // Check if credentials are configured
             if (empty($this->clientId) || empty($this->clientSecret)) {
-                throw new Exception('PayPal API credentials are not configured');
+                $errorMsg = 'PayPal API credentials are not configured. ';
+                $errorMsg .= 'Please check your .env file for PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET. ';
+                $errorMsg .= 'Mode: ' . (strpos($this->baseUrl, 'sandbox') !== false ? 'sandbox' : 'live');
+
+                Log::error('PayPal credentials missing', [
+                    'base_url' => $this->baseUrl,
+                    'has_client_id' => !empty($this->clientId),
+                    'has_client_secret' => !empty($this->clientSecret),
+                    'client_id_length' => $this->clientId ? strlen($this->clientId) : 0,
+                    'client_secret_length' => $this->clientSecret ? strlen($this->clientSecret) : 0
+                ]);
+
+                throw new Exception($errorMsg);
             }
+
+            // Log authentication attempt (without exposing credentials)
+            Log::info('Attempting PayPal OAuth authentication', [
+                'base_url' => $this->baseUrl,
+                'client_id_prefix' => substr($this->clientId, 0, 10) . '...',
+                'client_id_length' => strlen($this->clientId),
+                'client_secret_length' => strlen($this->clientSecret)
+            ]);
 
             $response = Http::withBasicAuth($this->clientId, $this->clientSecret)
                 ->asForm()
@@ -48,14 +123,41 @@ class PayPalService
             if ($response->successful()) {
                 $data = $response->json();
                 $this->accessToken = $data['access_token'];
+
+                Log::info('PayPal OAuth authentication successful', [
+                    'base_url' => $this->baseUrl,
+                    'token_type' => $data['token_type'] ?? 'unknown',
+                    'expires_in' => $data['expires_in'] ?? 'unknown'
+                ]);
+
                 return $this->accessToken;
             }
 
+            // Enhanced error logging
+            $statusCode = $response->status();
             $errorData = $response->json();
             $errorMessage = $errorData['error_description'] ?? $errorData['error'] ?? 'Unknown error';
+            $errorCode = $errorData['error'] ?? 'UNKNOWN';
+
+            Log::error('PayPal OAuth authentication failed', [
+                'base_url' => $this->baseUrl,
+                'status_code' => $statusCode,
+                'error_code' => $errorCode,
+                'error_message' => $errorMessage,
+                'response_body' => $response->body(),
+                'client_id_prefix' => substr($this->clientId, 0, 10) . '...',
+                'client_id_length' => strlen($this->clientId),
+                'hint' => $statusCode === 401
+                    ? 'Check if credentials match the environment (sandbox vs live). Sandbox credentials only work with sandbox API, live credentials only work with live API.'
+                    : 'Check PayPal API status and credentials validity.'
+            ]);
+
             throw new Exception('Failed to get PayPal access token: ' . $errorMessage);
         } catch (Exception $e) {
-            Log::error('PayPal OAuth Error: ' . $e->getMessage());
+            Log::error('PayPal OAuth Error: ' . $e->getMessage(), [
+                'base_url' => $this->baseUrl,
+                'exception_type' => get_class($e)
+            ]);
             throw $e;
         }
     }
