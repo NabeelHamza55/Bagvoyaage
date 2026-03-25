@@ -548,12 +548,84 @@ class PayPalService
                     'updated_at' => now()
                 ]);
 
-                // Update shipment status
+                // Update shipment status and process shipment (create label + schedule pickup)
                 if ($transaction->shipment) {
-                    $transaction->shipment->update([
-                        'status' => 'payment_completed',
+                    $shipment = $transaction->shipment;
+                    $shipment->update([
+                        'status' => 'paid',
                         'updated_at' => now()
                     ]);
+
+                    Log::info('Webhook: Processing shipment after payment capture', [
+                        'shipment_id' => $shipment->id,
+                        'transaction_id' => $transaction->id
+                    ]);
+
+                    // Trigger shipment processing (label + pickup)
+                    try {
+                        $fedexService = new \App\Services\FedExServiceFixed();
+                        
+                        // Create shipment with FedEx
+                        $response = $fedexService->createShipment($shipment);
+
+                        if ($response['success']) {
+                            $shipment->tracking_number = $response['tracking_number'] ?? null;
+                            $shipment->status = 'shipment_created';
+                            $shipment->fedex_response = json_encode($response);
+                            $shipment->save();
+
+                            // Create shipment tags (label)
+                            $tagResult = $fedexService->createShipmentTags($shipment, $response);
+                            if ($tagResult['success']) {
+                                $labelBase64 = $tagResult['label_base64'] ?? null;
+                                $currentFedexResponse = json_decode($shipment->fedex_response, true) ?: [];
+
+                                if ($labelBase64) {
+                                    $filePath = storage_path("app/public/labels/{$shipment->id}.pdf");
+                                    file_put_contents($filePath, base64_decode($labelBase64));
+                                    $currentFedexResponse['label_url'] = asset("storage/labels/{$shipment->id}.pdf");
+                                }
+
+                                $shipment->fedex_response = json_encode($currentFedexResponse);
+                                $shipment->status = 'label_generated';
+                                $shipment->save();
+
+                                // Send admin notification
+                                $notificationService = new \App\Services\NotificationService();
+                                $publicLabelPath = public_path("storage/labels/{$shipment->id}.pdf");
+                                if (file_exists($publicLabelPath)) {
+                                    $notificationService->sendAdminNewOrderNotification($shipment, $publicLabelPath);
+                                }
+                            }
+
+                            // Schedule pickup if needed
+                            if ($shipment->pickup_type == 'PICKUP' && !$shipment->pickup_scheduled) {
+                                $pickupResult = $fedexService->schedulePickup($shipment);
+
+                                if ($pickupResult['success']) {
+                                    $shipment->pickup_scheduled = true;
+                                    $shipment->pickup_confirmation = $pickupResult['confirmation_number'] ?? null;
+                                    $shipment->pickup_date = $pickupResult['scheduled_date'] ?? $shipment->preferred_ship_date->format('Y-m-d');
+                                    $shipment->status = 'pickup_scheduled';
+                                    $shipment->save();
+
+                                    Log::info('Webhook: Pickup scheduled after payment', [
+                                        'shipment_id' => $shipment->id,
+                                        'confirmation_number' => $pickupResult['confirmation_number']
+                                    ]);
+
+                                    // Send pickup confirmation email
+                                    $notificationService = new \App\Services\NotificationService();
+                                    $notificationService->sendPickupScheduled($shipment);
+                                }
+                            }
+                        }
+                    } catch (\Exception $e) {
+                        Log::error('Webhook: Error processing shipment after payment', [
+                            'shipment_id' => $shipment->id,
+                            'error' => $e->getMessage()
+                        ]);
+                    }
                 }
 
                 Log::info('Payment capture completed processed', [
@@ -743,12 +815,84 @@ class PayPalService
                     'updated_at' => now()
                 ]);
 
-                // Update shipment status
+                // Update shipment status and process shipment (create label + schedule pickup)
                 if ($transaction->shipment) {
-                    $transaction->shipment->update([
-                        'status' => 'payment_completed',
+                    $shipment = $transaction->shipment;
+                    $shipment->update([
+                        'status' => 'paid',
                         'updated_at' => now()
                     ]);
+
+                    Log::info('Webhook: Processing shipment after order completion', [
+                        'shipment_id' => $shipment->id,
+                        'transaction_id' => $transaction->id
+                    ]);
+
+                    // Trigger shipment processing (label + pickup)
+                    try {
+                        $fedexService = new \App\Services\FedExServiceFixed();
+                        
+                        // Create shipment with FedEx
+                        $response = $fedexService->createShipment($shipment);
+
+                        if ($response['success']) {
+                            $shipment->tracking_number = $response['tracking_number'] ?? null;
+                            $shipment->status = 'shipment_created';
+                            $shipment->fedex_response = json_encode($response);
+                            $shipment->save();
+
+                            // Create shipment tags (label)
+                            $tagResult = $fedexService->createShipmentTags($shipment, $response);
+                            if ($tagResult['success']) {
+                                $labelBase64 = $tagResult['label_base64'] ?? null;
+                                $currentFedexResponse = json_decode($shipment->fedex_response, true) ?: [];
+
+                                if ($labelBase64) {
+                                    $filePath = storage_path("app/public/labels/{$shipment->id}.pdf");
+                                    file_put_contents($filePath, base64_decode($labelBase64));
+                                    $currentFedexResponse['label_url'] = asset("storage/labels/{$shipment->id}.pdf");
+                                }
+
+                                $shipment->fedex_response = json_encode($currentFedexResponse);
+                                $shipment->status = 'label_generated';
+                                $shipment->save();
+
+                                // Send admin notification
+                                $notificationService = new \App\Services\NotificationService();
+                                $publicLabelPath = public_path("storage/labels/{$shipment->id}.pdf");
+                                if (file_exists($publicLabelPath)) {
+                                    $notificationService->sendAdminNewOrderNotification($shipment, $publicLabelPath);
+                                }
+                            }
+
+                            // Schedule pickup if needed
+                            if ($shipment->pickup_type == 'PICKUP' && !$shipment->pickup_scheduled) {
+                                $pickupResult = $fedexService->schedulePickup($shipment);
+
+                                if ($pickupResult['success']) {
+                                    $shipment->pickup_scheduled = true;
+                                    $shipment->pickup_confirmation = $pickupResult['confirmation_number'] ?? null;
+                                    $shipment->pickup_date = $pickupResult['scheduled_date'] ?? $shipment->preferred_ship_date->format('Y-m-d');
+                                    $shipment->status = 'pickup_scheduled';
+                                    $shipment->save();
+
+                                    Log::info('Webhook: Pickup scheduled after order completion', [
+                                        'shipment_id' => $shipment->id,
+                                        'confirmation_number' => $pickupResult['confirmation_number']
+                                    ]);
+
+                                    // Send pickup confirmation email
+                                    $notificationService = new \App\Services\NotificationService();
+                                    $notificationService->sendPickupScheduled($shipment);
+                                }
+                            }
+                        }
+                    } catch (\Exception $e) {
+                        Log::error('Webhook: Error processing shipment after order completion', [
+                            'shipment_id' => $shipment->id,
+                            'error' => $e->getMessage()
+                        ]);
+                    }
                 }
 
                 Log::info('Order completed processed', [

@@ -1006,13 +1006,30 @@ class FedExServiceFixed
             $pickupState = $shipment->sender_state;
             $pickupPostalCode = $shipment->sender_zipcode;
 
-            // Format date for pickup - ensure it's a business day
-            $pickupDate = $shipment->preferred_ship_date;
-
+            // Format date for pickup - ensure it's a business day and handle cutoff times
+            $pickupDate = \Carbon\Carbon::parse($shipment->preferred_ship_date);
+            $now = \Carbon\Carbon::now();
+            
+            // FedEx cutoff time is typically 3 PM (15:00) for same-day pickup
+            $cutoffHour = 15; // 3 PM
+            
             // If date is in the past or is a weekend, move to next business day
             if ($pickupDate->isPast() || $pickupDate->isWeekend()) {
                 $pickupDate = \Carbon\Carbon::now()->addDay();
-                // Keep moving forward until we find a business day
+                while ($pickupDate->isWeekend()) {
+                    $pickupDate = $pickupDate->addDay();
+                }
+            }
+            
+            // If pickup date is today and current time is past cutoff, move to next business day
+            if ($pickupDate->isToday() && $now->hour >= $cutoffHour) {
+                Log::info('Current time past cutoff, moving to next business day', [
+                    'shipment_id' => $shipment->id,
+                    'current_hour' => $now->hour,
+                    'cutoff_hour' => $cutoffHour
+                ]);
+                
+                $pickupDate = \Carbon\Carbon::now()->addDay();
                 while ($pickupDate->isWeekend()) {
                     $pickupDate = $pickupDate->addDay();
                 }
@@ -1023,27 +1040,35 @@ class FedExServiceFixed
                 'original_date' => $shipment->preferred_ship_date->format('Y-m-d'),
                 'final_date' => $pickupDate->format('Y-m-d'),
                 'is_weekend' => $pickupDate->isWeekend(),
-                'day_of_week' => $pickupDate->format('l')
+                'day_of_week' => $pickupDate->format('l'),
+                'current_hour' => $now->hour,
+                'is_past_cutoff' => $now->hour >= $cutoffHour
             ]);
 
-            // Format times according to FedEx documentation based on time slot
+            // Format times according to FedEx documentation
+            // Use safe times that are well before cutoff (8 AM - 2 PM window)
             $timeSlot = $shipment->pickup_time_slot ?? 'morning';
+            
+            // Always schedule pickup for the pickup date, not today
+            $pickupDateStr = $pickupDate->format('Y-m-d');
+            
             switch ($timeSlot) {
                 case 'morning':
-                    $readyTime = $pickupDate->format('Y-m-d') . 'T08:00:00-05:00';
+                    $readyTime = $pickupDateStr . 'T08:00:00-05:00';
                     $closeTime = '12:00:00';
                     break;
                 case 'afternoon':
-                    $readyTime = $pickupDate->format('Y-m-d') . 'T12:00:00-05:00';
-                    $closeTime = '16:00:00';
+                    $readyTime = $pickupDateStr . 'T11:00:00-05:00';
+                    $closeTime = '15:00:00';
                     break;
                 case 'evening':
-                    $readyTime = $pickupDate->format('Y-m-d') . 'T16:00:00-05:00';
-                    $closeTime = '19:00:00';
+                    // Evening pickups are risky - use early afternoon instead
+                    $readyTime = $pickupDateStr . 'T10:00:00-05:00';
+                    $closeTime = '14:00:00';
                     break;
                 default:
-                    $readyTime = $pickupDate->format('Y-m-d') . 'T09:00:00-05:00';
-                    $closeTime = '17:00:00';
+                    $readyTime = $pickupDateStr . 'T09:00:00-05:00';
+                    $closeTime = '15:00:00';
             }
 
             // Determine carrier code based on service type
@@ -1059,62 +1084,32 @@ class FedExServiceFixed
                     'pickupLocation' => [
                         'contact' => [
                             'personName' => $shipment->sender_full_name,
-                            'emailAddress' => $shipment->sender_email,
-                            'phoneNumber' => $this->formatPhoneNumber($shipment->sender_phone),
-                            'phoneExtension' => ''
+                            'phoneNumber' => $this->formatPhoneNumber($shipment->sender_phone)
                         ],
                         'address' => [
                             'streetLines' => [$pickupAddress],
                             'city' => $pickupCity,
                             'stateOrProvinceCode' => $pickupState,
                             'postalCode' => $pickupPostalCode,
-                            'countryCode' => 'US',
-                            'residential' => false
+                            'countryCode' => 'US'
                         ]
                     ],
-                    'packageLocation' => 'FRONT_DOOR',
-                    'buildingPartDescription' => 'Main entrance',
+                    'packageLocation' => 'FRONT',
                     'readyDateTimestamp' => $readyTime,
-                    'customerCloseTime' => $closeTime,
-                    'pickupDateType' => $pickupDate->isToday() ? 'SAME_DAY' : 'FUTURE_DAY',
-                    'geographicalPostalCode' => $pickupPostalCode,
-                    'location' => $pickupAddress . ', ' . $pickupCity . ', ' . $pickupState . ' ' . $pickupPostalCode
+                    'customerCloseTime' => $closeTime
                 ],
+                'carrierCode' => $carrierCode,
                 'totalPackageCount' => 1,
                 'totalWeight' => [
                     'units' => 'LB',
                     'value' => $formattedWeight
-                ],
-                'packageDetails' => [
-                    'packageCount' => 1,
-                    'totalWeight' => [
-                        'units' => 'LB',
-                        'value' => $formattedWeight
-                    ],
-                    'packageType' => 'YOUR_PACKAGING',
-                    'serviceType' => $serviceType,
-                    'carrierCode' => $carrierCode,
-                    'remarks' => 'Shipment ID: ' . $shipment->id . ' - ' . substr($shipment->package_description, 0, 50)
-                ],
-                'carrierCode' => $carrierCode,
-                'countryRelationship' => 'DOMESTIC',
-                'pickupNotificationDetail' => [
-                    'emailAddress' => $shipment->sender_email,
-                    'notificationTypes' => ['PICKUP_CONFIRMATION', 'PICKUP_CANCELLATION'],
-                    'notificationType' => 'EMAIL',
-                    'locale' => 'en_US'
-                ],
-                'remarks' => 'BagVoyage pickup request for shipment ID: ' . $shipment->id,
-                'commodityDescription' => substr($shipment->package_description, 0, 100),
-                'oversizePackageCount' => 0
+                ]
             ];
 
-            // Log the payload for debugging
-            Log::debug('FedEx pickup payload', [
+            // Log the complete payload for debugging
+            Log::info('FedEx pickup payload FULL', [
                 'shipment_id' => $shipment->id,
-                'carrier_code' => $carrierCode,
-                'service_type' => $serviceType,
-                'pickup_date_type' => $pickupDate->isToday() ? 'SAME_DAY' : 'FUTURE_DAY'
+                'payload' => $payload
             ]);
 
             // Make the API request with retry logic for service unavailable errors
@@ -1194,10 +1189,12 @@ class FedExServiceFixed
             }
 
             $errorBody = $response->body();
+            $errorData = $response->json();
             Log::error('=== FEDEX PICKUP API ERROR ===', [
                 'shipment_id' => $shipment->id,
                 'status_code' => $response->status(),
                 'response_body' => $errorBody,
+                'error_json' => $errorData,
                 'carrier_code' => $carrierCode,
                 'service_type' => $serviceType,
                 'endpoint' => $this->baseUrl . '/pickup/v1/pickups'
