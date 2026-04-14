@@ -148,3 +148,147 @@
     </div>
 </div>
 @endsection
+
+@push('scripts')
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const pickupDateInput = document.getElementById('pickup_date');
+        if (pickupDateInput) {
+            // Function to get minimum pickup date based on cutoff time
+            function getMinPickupDate() {
+                const now = new Date();
+                const cutoffHour = 15; // 3 PM
+                
+                // If past 3 PM, pickup must be tomorrow or later
+                if (now.getHours() >= cutoffHour) {
+                    const tomorrow = new Date();
+                    tomorrow.setDate(tomorrow.getDate() + 1);
+                    const year = tomorrow.getFullYear();
+                    const month = String(tomorrow.getMonth() + 1).padStart(2, '0');
+                    const day = String(tomorrow.getDate()).padStart(2, '0');
+                    return `${year}-${month}-${day}`;
+                } else {
+                    const year = now.getFullYear();
+                    const month = String(now.getMonth() + 1).padStart(2, '0');
+                    const day = String(now.getDate()).padStart(2, '0');
+                    return `${year}-${month}-${day}`;
+                }
+            }
+            
+            // Set min date dynamically
+            const minDate = getMinPickupDate();
+            pickupDateInput.setAttribute('min', minDate);
+            
+            // Update current value if needed
+            if (pickupDateInput.value && pickupDateInput.value < minDate) {
+                pickupDateInput.value = minDate;
+            }
+            
+            // Validate on change
+            pickupDateInput.addEventListener('change', function() {
+                const selectedValue = this.value;
+                const minDateValue = getMinPickupDate();
+                
+                if (selectedValue < minDateValue) {
+                    const now = new Date();
+                    if (now.getHours() >= 15) {
+                        alert('It is past 3 PM cutoff time. Pickup must be scheduled for tomorrow or later.');
+                    } else {
+                        alert('Pickup date cannot be in the past.');
+                    }
+                    this.value = minDateValue;
+                }
+            });
+            
+            // Validate before form submission
+            const forms = document.querySelectorAll('form');
+            forms.forEach(function(form) {
+                form.addEventListener('submit', function(e) {
+                    const selectedValue = pickupDateInput.value;
+                    const minDateValue = getMinPickupDate();
+                    
+                    if (selectedValue < minDateValue) {
+                        e.preventDefault();
+                        alert('Invalid pickup date. Please select a valid date.');
+                        pickupDateInput.value = minDateValue;
+                        pickupDateInput.focus();
+                        return false;
+                    }
+                });
+            });
+        }
+    });
+</script>
+@endpush
+
+@push('scripts')
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const pickupDateInput = document.getElementById('pickup_date');
+        if (pickupDateInput) {
+            // Function to get minimum pickup date (today or tomorrow based on cutoff)
+            function getMinPickupDate() {
+                const now = new Date();
+                const cutoffHour = 15; // 3 PM
+                
+                // If past 3 PM, pickup must be tomorrow or later
+                if (now.getHours() >= cutoffHour) {
+                    const tomorrow = new Date();
+                    tomorrow.setDate(tomorrow.getDate() + 1);
+                    const year = tomorrow.getFullYear();
+                    const month = String(tomorrow.getMonth() + 1).padStart(2, '0');
+                    const day = String(tomorrow.getDate()).padStart(2, '0');
+                    return `${year}-${month}-${day}`;
+                } else {
+                    const year = now.getFullYear();
+                    const month = String(now.getMonth() + 1).padStart(2, '0');
+                    const day = String(now.getDate()).padStart(2, '0');
+                    return `${year}-${month}-${day}`;
+                }
+            }
+            
+            // Set min date dynamically
+            const minDate = getMinPickupDate();
+            pickupDateInput.setAttribute('min', minDate);
+            
+            // If current value is less than min, update it
+            if (pickupDateInput.value && pickupDateInput.value < minDate) {
+                pickupDateInput.value = minDate;
+            }
+            
+            // Validate on change
+            pickupDateInput.addEventListener('change', function() {
+                const selectedValue = this.value;
+                const minDateValue = getMinPickupDate();
+                
+                if (selectedValue < minDateValue) {
+                    const now = new Date();
+                    if (now.getHours() >= 15) {
+                        alert('It is past 3 PM cutoff time. Pickup date must be tomorrow or later.');
+                    } else {
+                        alert('Pickup date cannot be in the past. Please select a valid date.');
+                    }
+                    this.value = minDateValue;
+                }
+            });
+            
+            // Validate before form submission
+            const form = pickupDateInput.closest('form');
+            if (form) {
+                form.addEventListener('submit', function(e) {
+                    const selectedValue = pickupDateInput.value;
+                    const minDateValue = getMinPickupDate();
+                    
+                    if (selectedValue < minDateValue) {
+                        e.preventDefault();
+                        alert('Invalid pickup date. Please select a valid date.');
+                        pickupDateInput.value = minDateValue;
+                        pickupDateInput.focus();
+                        return false;
+                    }
+                });
+            }
+        }
+    });
+</script>
+@endpush

@@ -281,7 +281,7 @@
                                     id="pickup_date"
                                     name="pickup_date"
                                     value="{{ old('pickup_date') }}"
-                                    min="{{ date('Y-m-d', strtotime('+1 day')) }}"
+                                    min="{{ date('H') >= 15 ? date('Y-m-d', strtotime('+1 day')) : date('Y-m-d') }}"
                                     class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                                 >
                                 @error('pickup_date')
@@ -821,6 +821,137 @@
 
         if (destinationState) {
             loadCitiesForState(destinationState, recipientCity);
+        }
+
+        // Prevent selecting past dates for shipment - robust validation
+        const shipDateInput = document.getElementById('preferred_ship_date');
+        if (shipDateInput) {
+            // Function to get today's date string
+            function getTodayString() {
+                const now = new Date();
+                const year = now.getFullYear();
+                const month = String(now.getMonth() + 1).padStart(2, '0');
+                const day = String(now.getDate()).padStart(2, '0');
+                return `${year}-${month}-${day}`;
+            }
+            
+            // Set min date dynamically on page load (overrides server-side value)
+            const today = getTodayString();
+            shipDateInput.setAttribute('min', today);
+            
+            // Set default value to today if empty
+            if (!shipDateInput.value) {
+                shipDateInput.value = today;
+            }
+            
+            // Validate on change
+            shipDateInput.addEventListener('change', function() {
+                const selectedValue = this.value;
+                const todayValue = getTodayString();
+                
+                if (selectedValue < todayValue) {
+                    alert('Ship date cannot be in the past. It has been reset to today.');
+                    this.value = todayValue;
+                }
+            });
+            
+            // Validate on blur (when user leaves the field)
+            shipDateInput.addEventListener('blur', function() {
+                const selectedValue = this.value;
+                const todayValue = getTodayString();
+                
+                if (selectedValue && selectedValue < todayValue) {
+                    this.value = todayValue;
+                }
+            });
+            
+            // Validate before form submission
+            const form = shipDateInput.closest('form');
+            if (form) {
+                form.addEventListener('submit', function(e) {
+                    const selectedValue = shipDateInput.value;
+                    const todayValue = getTodayString();
+                    
+                    if (selectedValue < todayValue) {
+                        e.preventDefault();
+                        alert('Ship date cannot be in the past. Please select today or a future date.');
+                        shipDateInput.value = todayValue;
+                        shipDateInput.focus();
+                        return false;
+                    }
+                });
+            }
+        }
+        
+        // Prevent selecting invalid pickup dates (with 3 PM cutoff logic)
+        const pickupDateInput = document.getElementById('pickup_date');
+        if (pickupDateInput) {
+            // Function to get minimum pickup date based on cutoff
+            function getMinPickupDateString() {
+                const now = new Date();
+                const cutoffHour = 15; // 3 PM
+                
+                let minDate;
+                // If past 3 PM, pickup must be tomorrow or later
+                if (now.getHours() >= cutoffHour) {
+                    minDate = new Date();
+                    minDate.setDate(minDate.getDate() + 1);
+                } else {
+                    // Before 3 PM, pickup can be today
+                    minDate = new Date();
+                }
+                
+                const year = minDate.getFullYear();
+                const month = String(minDate.getMonth() + 1).padStart(2, '0');
+                const day = String(minDate.getDate()).padStart(2, '0');
+                return `${year}-${month}-${day}`;
+            }
+            
+            // Set min date dynamically based on cutoff
+            const minPickupDate = getMinPickupDateString();
+            pickupDateInput.setAttribute('min', minPickupDate);
+            
+            // Validate on change
+            pickupDateInput.addEventListener('change', function() {
+                const selectedValue = this.value;
+                const minDateValue = getMinPickupDateString();
+                
+                if (selectedValue < minDateValue) {
+                    const now = new Date();
+                    if (now.getHours() >= 15) {
+                        alert('It is past 3 PM cutoff time. Pickup must be scheduled for tomorrow or later.');
+                    } else {
+                        alert('Pickup date cannot be in the past.');
+                    }
+                    this.value = minDateValue;
+                }
+            });
+            
+            // Validate before form submission
+            const form = pickupDateInput.closest('form');
+            if (form) {
+                const existingListener = form.getAttribute('data-pickup-validated');
+                if (!existingListener) {
+                    form.addEventListener('submit', function(e) {
+                        const selectedValue = pickupDateInput.value;
+                        const minDateValue = getMinPickupDateString();
+                        
+                        if (selectedValue && selectedValue < minDateValue) {
+                            e.preventDefault();
+                            const now = new Date();
+                            if (now.getHours() >= 15) {
+                                alert('It is past 3 PM. Pickup must be scheduled for tomorrow or later.');
+                            } else {
+                                alert('Invalid pickup date. Please select today or a future date.');
+                            }
+                            pickupDateInput.value = minDateValue;
+                            pickupDateInput.focus();
+                            return false;
+                        }
+                    });
+                    form.setAttribute('data-pickup-validated', 'true');
+                }
+            }
         }
     });
 </script>

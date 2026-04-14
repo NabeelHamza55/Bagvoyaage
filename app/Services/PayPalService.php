@@ -572,6 +572,12 @@ class PayPalService
                             $shipment->tracking_number = $response['tracking_number'] ?? null;
                             $shipment->status = 'shipment_created';
                             $shipment->fedex_response = json_encode($response);
+                            
+                            // Update preferred_ship_date if it was adjusted
+                            if (!empty($response['actual_ship_date'])) {
+                                $shipment->preferred_ship_date = $response['actual_ship_date'];
+                            }
+                            
                             $shipment->save();
 
                             // Create shipment tags (label)
@@ -605,13 +611,21 @@ class PayPalService
                                 if ($pickupResult['success']) {
                                     $shipment->pickup_scheduled = true;
                                     $shipment->pickup_confirmation = $pickupResult['confirmation_number'] ?? null;
-                                    $shipment->pickup_date = $pickupResult['scheduled_date'] ?? $shipment->preferred_ship_date->format('Y-m-d');
+                                    $shipment->pickup_date = $pickupResult['actual_pickup_date'] ?? $pickupResult['scheduled_date'] ?? null;
+                                    
+                                    // Update preferred_ship_date if it was adjusted
+                                    if (!empty($pickupResult['actual_ship_date'])) {
+                                        $shipment->preferred_ship_date = $pickupResult['actual_ship_date'];
+                                    }
+                                    
                                     $shipment->status = 'pickup_scheduled';
                                     $shipment->save();
 
                                     Log::info('Webhook: Pickup scheduled after payment', [
                                         'shipment_id' => $shipment->id,
-                                        'confirmation_number' => $pickupResult['confirmation_number']
+                                        'confirmation_number' => $pickupResult['confirmation_number'],
+                                        'actual_pickup_date' => $pickupResult['actual_pickup_date'] ?? null,
+                                        'actual_ship_date' => $pickupResult['actual_ship_date'] ?? null
                                     ]);
 
                                     // Send pickup confirmation email
@@ -839,6 +853,12 @@ class PayPalService
                             $shipment->tracking_number = $response['tracking_number'] ?? null;
                             $shipment->status = 'shipment_created';
                             $shipment->fedex_response = json_encode($response);
+                            
+                            // Update preferred_ship_date if it was adjusted
+                            if (!empty($response['actual_ship_date'])) {
+                                $shipment->preferred_ship_date = $response['actual_ship_date'];
+                            }
+                            
                             $shipment->save();
 
                             // Create shipment tags (label)
@@ -872,13 +892,21 @@ class PayPalService
                                 if ($pickupResult['success']) {
                                     $shipment->pickup_scheduled = true;
                                     $shipment->pickup_confirmation = $pickupResult['confirmation_number'] ?? null;
-                                    $shipment->pickup_date = $pickupResult['scheduled_date'] ?? $shipment->preferred_ship_date->format('Y-m-d');
+                                    $shipment->pickup_date = $pickupResult['actual_pickup_date'] ?? $pickupResult['scheduled_date'] ?? null;
+                                    
+                                    // Update preferred_ship_date if it was adjusted
+                                    if (!empty($pickupResult['actual_ship_date'])) {
+                                        $shipment->preferred_ship_date = $pickupResult['actual_ship_date'];
+                                    }
+                                    
                                     $shipment->status = 'pickup_scheduled';
                                     $shipment->save();
 
                                     Log::info('Webhook: Pickup scheduled after order completion', [
                                         'shipment_id' => $shipment->id,
-                                        'confirmation_number' => $pickupResult['confirmation_number']
+                                        'confirmation_number' => $pickupResult['confirmation_number'],
+                                        'actual_pickup_date' => $pickupResult['actual_pickup_date'] ?? null,
+                                        'actual_ship_date' => $pickupResult['actual_ship_date'] ?? null
                                     ]);
 
                                     // Send pickup confirmation email

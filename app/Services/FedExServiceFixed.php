@@ -192,7 +192,7 @@ class FedExServiceFixed
                             'deliveryInstructions' => null // Optional, can be null
                         ]
                     ],
-                    'shipDatestamp' => $shipment->preferred_ship_date->format('Y-m-d'),
+                    'shipDatestamp' => $this->getValidShipDate($shipment),
                     'serviceType' => $serviceType,
                     'packagingType' => $shipment->packaging_type ?? 'YOUR_PACKAGING',
                     'pickupType' => $pickupType,
@@ -379,6 +379,9 @@ class FedExServiceFixed
                     ]);
                 }
 
+                // Get the actual ship date that was used
+                $actualShipDate = $this->getValidShipDate($shipment);
+                
                 return [
                     'success' => true,
                     'tracking_number' => $trackingNumber,
@@ -388,7 +391,8 @@ class FedExServiceFixed
                     'document_type' => $documentType,      // useful to confirm PDF type
                     'base64_pdf' => $documentEncoding,     // if FedEx returns encoded PDF
                     'message' => 'Shipment created successfully',
-                    'response_data' => $data
+                    'response_data' => $data,
+                    'actual_ship_date' => $actualShipDate  // Store the corrected date
                 ];
             }
 
@@ -1006,43 +1010,19 @@ class FedExServiceFixed
             $pickupState = $shipment->sender_state;
             $pickupPostalCode = $shipment->sender_zipcode;
 
-            // Format date for pickup - ensure it's a business day and handle cutoff times
-            $pickupDate = \Carbon\Carbon::parse($shipment->preferred_ship_date);
-            $now = \Carbon\Carbon::now();
-            
-            // FedEx cutoff time is typically 3 PM (15:00) for same-day pickup
-            $cutoffHour = 15; // 3 PM
-            
-            // If date is in the past or is a weekend, move to next business day
-            if ($pickupDate->isPast() || $pickupDate->isWeekend()) {
-                $pickupDate = \Carbon\Carbon::now()->addDay();
-                while ($pickupDate->isWeekend()) {
-                    $pickupDate = $pickupDate->addDay();
-                }
-            }
-            
-            // If pickup date is today and current time is past cutoff, move to next business day
-            if ($pickupDate->isToday() && $now->hour >= $cutoffHour) {
-                Log::info('Current time past cutoff, moving to next business day', [
-                    'shipment_id' => $shipment->id,
-                    'current_hour' => $now->hour,
-                    'cutoff_hour' => $cutoffHour
-                ]);
-                
-                $pickupDate = \Carbon\Carbon::now()->addDay();
-                while ($pickupDate->isWeekend()) {
-                    $pickupDate = $pickupDate->addDay();
-                }
-            }
+            // Get valid pickup and ship dates
+            $dates = $this->calculatePickupAndShipDates($shipment);
+            $pickupDate = $dates['pickup_date'];
+            $shipDate = $dates['ship_date'];
 
             Log::info('Pickup date validation', [
                 'shipment_id' => $shipment->id,
-                'original_date' => $shipment->preferred_ship_date->format('Y-m-d'),
-                'final_date' => $pickupDate->format('Y-m-d'),
+                'original_preferred_date' => $shipment->preferred_ship_date->format('Y-m-d'),
+                'final_pickup_date' => $pickupDate->format('Y-m-d'),
+                'final_ship_date' => $shipDate->format('Y-m-d'),
                 'is_weekend' => $pickupDate->isWeekend(),
                 'day_of_week' => $pickupDate->format('l'),
-                'current_hour' => $now->hour,
-                'is_past_cutoff' => $now->hour >= $cutoffHour
+                'current_hour' => \Carbon\Carbon::now()->hour
             ]);
 
             // Format times according to FedEx documentation
@@ -1182,6 +1162,8 @@ class FedExServiceFixed
                     'confirmation_number' => $confirmationNumber,
                     'location' => $location,
                     'scheduled_date' => $scheduledDate,
+                    'actual_pickup_date' => $pickupDate->format('Y-m-d'),
+                    'actual_ship_date' => $shipDate->format('Y-m-d'),
                     'carrier_code' => $carrierCode,
                     'message' => 'Pickup scheduled successfully',
                     'response_data' => $data
@@ -1843,5 +1825,86 @@ class FedExServiceFixed
                 'error_code' => 'TRACKING_ERROR'
             ];
         }
+    }
+
+    /**
+     * Get a valid ship date that is not in the past
+     * 
+     * @param mixed $shipment
+     * @return string Formatted ship date (Y-m-d)
+     */
+    private function getValidShipDate($shipment): string
+    {
+        $preferredDate = \Carbon\Carbon::parse($shipment->preferred_ship_date);
+        $today = \Carbon\Carbon::today();
+        
+        // If preferred date is in the past, use today
+        if ($preferredDate->lt($today)) {
+            Log::info('Preferred ship date is in the past, using today', [
+                'shipment_id' => $shipment->id,
+                'preferred_date' => $preferredDate->format('Y-m-d'),
+                'adjusted_to' => $today->format('Y-m-d')
+            ]);
+            return $today->format('Y-m-d');
+        }
+        
+        return $preferredDate->format('Y-m-d');
+    }
+
+    /**
+     * Calculate valid pickup and ship dates
+     * Ensures pickup date is before or equal to ship date
+     * 
+     * @param mixed $shipment
+     * @return array ['pickup_date' => Carbon, 'ship_date' => Carbon]
+     */
+    private function calculatePickupAndShipDates($shipment): array
+    {
+        $now = \Carbon\Carbon::now();
+        $cutoffHour = 15; // 3 PM cutoff for same-day pickup
+        
+        // Get valid ship date (not in past)
+        $shipDate = \Carbon\Carbon::parse($this->getValidShipDate($shipment));
+        
+        // Calculate initial pickup date
+        $pickupDate = \Carbon\Carbon::today();
+        
+        // If current time is past cutoff, pickup must be tomorrow or later
+        if ($now->hour >= $cutoffHour) {
+            $pickupDate = \Carbon\Carbon::tomorrow();
+        }
+        
+        // Skip weekends for pickup
+        while ($pickupDate->isWeekend()) {
+            $pickupDate = $pickupDate->addDay();
+        }
+        
+        // CRITICAL: Pickup must be before or equal to ship date
+        // If pickup date would be after ship date, we need to adjust ship date forward
+        if ($pickupDate->gt($shipDate)) {
+            Log::info('Pickup date is after ship date, adjusting ship date forward', [
+                'shipment_id' => $shipment->id,
+                'original_ship_date' => $shipDate->format('Y-m-d'),
+                'pickup_date' => $pickupDate->format('Y-m-d')
+            ]);
+            
+            // Ship date should be at least 1 day after pickup
+            $shipDate = $pickupDate->copy()->addDay();
+            
+            // Skip weekends for ship date too
+            while ($shipDate->isWeekend()) {
+                $shipDate = $shipDate->addDay();
+            }
+            
+            Log::info('Adjusted ship date', [
+                'shipment_id' => $shipment->id,
+                'new_ship_date' => $shipDate->format('Y-m-d')
+            ]);
+        }
+        
+        return [
+            'pickup_date' => $pickupDate,
+            'ship_date' => $shipDate
+        ];
     }
 }

@@ -130,12 +130,18 @@ class ShipmentController extends Controller
 
         // Additional validation for pickup fields
         if ($validated['pickup_type'] === 'PICKUP') {
+            $cutoffHour = 15; // 3 PM
+            $now = \Carbon\Carbon::now();
+
+            // Pickup can be today if before cutoff, otherwise must be tomorrow or later
+            $minPickupDate = ($now->hour >= $cutoffHour) ? 'after:today' : 'after_or_equal:today';
+
             $request->validate([
                 'pickup_address' => 'required|string|max:500',
                 'pickup_city' => 'required|string|max:100',
                 'pickup_city_custom' => 'nullable|string|max:100',
                 'pickup_zip' => 'required|string|max:10',
-                'pickup_date' => 'required|date|after:today',
+                'pickup_date' => 'required|date|' . $minPickupDate,
                 'pickup_time_slot' => 'required|in:morning,afternoon,evening',
                 // pickup_ready_time and pickup_close_time are now auto-generated from pickup_time_slot
                 'pickup_ready_time' => 'nullable|date_format:H:i',
@@ -303,6 +309,20 @@ class ShipmentController extends Controller
                 ]);
             }
 
+            // Validate and fix ship date if in the past
+            $preferredDate = \Carbon\Carbon::parse($shipment->preferred_ship_date);
+            if ($preferredDate->isPast()) {
+                $today = \Carbon\Carbon::today();
+                $shipment->preferred_ship_date = $today->format('Y-m-d');
+                $shipment->save();
+
+                Log::info('Ship date was in the past, adjusted to today', [
+                    'shipment_id' => $shipment->id,
+                    'original_date' => $preferredDate->format('Y-m-d'),
+                    'adjusted_to' => $today->format('Y-m-d')
+                ]);
+            }
+
             // Create payment transaction
             $transaction = \App\Models\PaymentTransaction::create([
                 'shipment_id' => $shipment->id,
@@ -415,6 +435,12 @@ class ShipmentController extends Controller
                 $shipment->tracking_number = $response['tracking_number'] ?? null;
                 $shipment->status = 'shipment_created';
                 $shipment->fedex_response = json_encode($response);
+
+                // Update preferred_ship_date if it was adjusted to be valid
+                if (!empty($response['actual_ship_date'])) {
+                    $shipment->preferred_ship_date = $response['actual_ship_date'];
+                }
+
                 $shipment->save();
 
                 // Create shipment tags after successful shipment creation
@@ -571,7 +597,13 @@ class ShipmentController extends Controller
                         // Update shipment with actual FedEx pickup details
                         $shipment->pickup_scheduled = true;
                         $shipment->pickup_confirmation = $pickupResult['confirmation_number'] ?? null;
-                        $shipment->pickup_date = $pickupResult['scheduled_date'] ?? $shipment->preferred_ship_date->format('Y-m-d');
+                        $shipment->pickup_date = $pickupResult['actual_pickup_date'] ?? $pickupResult['scheduled_date'] ?? null;
+
+                        // Update preferred_ship_date if it was adjusted to ensure pickup < ship date
+                        if (!empty($pickupResult['actual_ship_date'])) {
+                            $shipment->preferred_ship_date = $pickupResult['actual_ship_date'];
+                        }
+
                         $shipment->status = 'pickup_scheduled';
                         $shipment->save();
 
