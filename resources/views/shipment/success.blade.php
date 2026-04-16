@@ -65,6 +65,27 @@
     text-decoration: none;
 }
 
+.btn-pickup {
+    display: inline-block;
+    background-color: #d97706;
+    color: white;
+    padding: 14px 28px;
+    border-radius: 6px;
+    font-weight: 600;
+    text-decoration: none;
+    margin: 4px;
+    transition: background-color 0.2s;
+    border: none;
+    cursor: pointer;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.btn-pickup:hover {
+    background-color: #b45309;
+    color: white;
+    text-decoration: none;
+}
+
 /* Ensure buttons are visible and clickable */
 a[href] {
     text-decoration: none !important;
@@ -74,8 +95,27 @@ a[href]:hover {
     text-decoration: none !important;
 }
 </style>
+@php
+    $pickupNeedsScheduling = $shipment->pickup_type === 'PICKUP' && !$shipment->pickup_scheduled;
+    $pickupScheduleAllowed = in_array($shipment->status, ['shipment_created', 'pickup_scheduled', 'label_generated', 'confirmed'], true);
+@endphp
 <div class="py-12 bg-gray-50">
     <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+        @if ($errors->any())
+            <div class="mb-6 rounded-lg border border-red-200 bg-red-50 p-4 text-red-800" role="alert">
+                <p class="font-semibold">Action required</p>
+                <ul class="mt-2 list-disc pl-5 text-sm">
+                    @foreach ($errors->all() as $error)
+                        <li>{{ $error }}</li>
+                    @endforeach
+                </ul>
+            </div>
+        @endif
+        @if (session('success'))
+            <div class="mb-6 rounded-lg border border-green-200 bg-green-50 p-4 text-green-800" role="status">
+                {{ session('success') }}
+            </div>
+        @endif
         <!-- Success Header -->
         <div class="bg-white rounded-lg shadow-md p-8 text-center mb-8">
             <div class="mb-6">
@@ -86,8 +126,10 @@ a[href]:hover {
                 </div>
                 <h1 class="text-3xl font-bold text-gray-900 mb-2">Payment Successful!</h1>
                 <p class="text-xl text-gray-600">
-                    @if($shipment->pickup_type == 'PICKUP')
-                        Your shipment has been created and pickup has been scheduled
+                    @if($shipment->pickup_type == 'PICKUP' && $shipment->pickup_scheduled)
+                        Your shipment is ready and FedEx pickup is confirmed.
+                    @elseif($shipment->pickup_type == 'PICKUP' && $pickupNeedsScheduling)
+                        Your shipment and label are ready. <strong class="text-gray-800">Finish FedEx pickup scheduling</strong> using the button below (we check FedEx availability first).
                     @else
                         Your shipment has been created successfully
                     @endif
@@ -131,6 +173,12 @@ a[href]:hover {
                     </a>
                 @endif
 
+                @if($pickupNeedsScheduling && $pickupScheduleAllowed)
+                    <a href="{{ route('shipment.pickup.form', $shipment) }}" class="btn-pickup">
+                        Schedule FedEx pickup — check availability
+                    </a>
+                @endif
+
                 {{-- @if($shipment->tracking_number)
                     <a href="{{ route('shipment.tracking', $shipment) }}" class="bg-green-500 text-white px-6 py-3 rounded-md font-medium hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2">
                         Track Shipment
@@ -159,46 +207,72 @@ a[href]:hover {
             <div class="bg-white rounded-lg shadow-md p-6 mb-8">
                 <h2 class="text-xl font-semibold text-gray-900 mb-4">Pickup Information</h2>
 
-                <div class="flex items-center mb-3">
-                    <svg class="w-6 h-6 text-green-600 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
-                    </svg>
-                    <h3 class="text-lg font-semibold text-green-800">Pickup Scheduled</h3>
-                </div>
-                <p class="text-sm text-green-700">
-                    Pickup confirmed for {{ $shipment->pickup_date ? \Carbon\Carbon::parse($shipment->pickup_date)->format('F j, Y') : $shipment->preferred_ship_date->format('F j, Y') }}
-                    @if($shipment->pickup_confirmation)
-                        <br>Confirmation: {{ $shipment->pickup_confirmation }}
-                    @endif
-                </p>
-                <div class="mt-4 p-4 bg-blue-50 rounded-lg">
-                    <h4 class="font-medium text-blue-800 mb-2">Pickup Details</h4>
-                    <ul class="text-sm text-blue-700 space-y-1">
-                        <li><span class="font-medium">Pickup Time:</span>
-                            @if($shipment->pickup_time_slot)
-                                @switch($shipment->pickup_time_slot)
-                                    @case('morning')
-                                        Morning (8 AM - 12 PM)
-                                        @break
-                                    @case('afternoon')
-                                        Afternoon (12 PM - 4 PM)
-                                        @break
-                                    @case('evening')
-                                        Evening (4 PM - 7 PM)
-                                        @break
-                                    @default
-                                        {{ $shipment->pickup_ready_time ? \Carbon\Carbon::parse($shipment->pickup_ready_time)->format('g:i A') : '9:00 AM' }} - {{ $shipment->pickup_close_time ? \Carbon\Carbon::parse($shipment->pickup_close_time)->format('g:i A') : '5:00 PM' }}
-                                @endswitch
-                            @else
-                                {{ $shipment->pickup_ready_time ? \Carbon\Carbon::parse($shipment->pickup_ready_time)->format('g:i A') : '9:00 AM' }} - {{ $shipment->pickup_close_time ? \Carbon\Carbon::parse($shipment->pickup_close_time)->format('g:i A') : '5:00 PM' }}
-                            @endif
-                        </li>
-                        <li><span class="font-medium">Location:</span> {{ $shipment->pickup_address ?: $shipment->sender_address_line }}</li>
-                        @if($shipment->pickup_instructions)
-                            <li><span class="font-medium">Instructions:</span> {{ $shipment->pickup_instructions }}</li>
+                @if($shipment->pickup_scheduled)
+                    <div class="flex items-center mb-3">
+                        <svg class="w-6 h-6 text-green-600 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                        </svg>
+                        <h3 class="text-lg font-semibold text-green-800">Pickup scheduled with FedEx</h3>
+                    </div>
+                    <p class="text-sm text-green-700">
+                        Pickup confirmed for {{ $shipment->pickup_date ? \Carbon\Carbon::parse($shipment->pickup_date)->format('F j, Y') : $shipment->preferred_ship_date->format('F j, Y') }}
+                        @if($shipment->pickup_confirmation)
+                            <br>Confirmation: {{ $shipment->pickup_confirmation }}
                         @endif
-                    </ul>
-                </div>
+                    </p>
+                    <div class="mt-4 p-4 bg-blue-50 rounded-lg">
+                        <h4 class="font-medium text-blue-800 mb-2">Pickup Details</h4>
+                        <ul class="text-sm text-blue-700 space-y-1">
+                            <li><span class="font-medium">Pickup window:</span>
+                                @php
+                                    $__fmt = function ($t) {
+                                        if (!$t) return null;
+                                        $t = strlen(trim($t)) === 5 ? trim($t).':00' : trim($t);
+                                        try {
+                                            return \Carbon\Carbon::createFromFormat('H:i:s', $t)->format('g:i A');
+                                        } catch (\Throwable) {
+                                            return $t;
+                                        }
+                                    };
+                                    $__r = $__fmt($shipment->pickup_ready_time);
+                                    $__c = $__fmt($shipment->pickup_close_time);
+                                @endphp
+                                @if($__r && $__c)
+                                    {{ $__r }} – {{ $__c }}
+                                @elseif($shipment->pickup_time_slot)
+                                    @switch($shipment->pickup_time_slot)
+                                        @case('morning') Morning (8 AM – 12 PM) @break
+                                        @case('afternoon') Afternoon (12 PM – 4 PM) @break
+                                        @case('evening') Evening (4 PM – 7 PM) @break
+                                        @default —
+                                    @endswitch
+                                @else
+                                    —
+                                @endif
+                            </li>
+                            <li><span class="font-medium">Location:</span> {{ $shipment->pickup_address ?: $shipment->sender_address_line }}</li>
+                            @if($shipment->pickup_instructions)
+                                <li><span class="font-medium">Instructions:</span> {{ $shipment->pickup_instructions }}</li>
+                            @endif
+                        </ul>
+                    </div>
+                @else
+                    <div class="rounded-lg border-2 border-amber-300 bg-amber-50 p-5">
+                        <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                            <div>
+                                <h3 class="text-lg font-semibold text-amber-900">Pickup not scheduled yet</h3>
+                                <p class="mt-1 text-sm text-amber-800">
+                                    Your label is ready, but FedEx still needs a pickup request. We call FedEx’s <strong>pickup availability</strong> API first, then you confirm the date and time window.
+                                </p>
+                            </div>
+                            @if($pickupScheduleAllowed)
+                                <a href="{{ route('shipment.pickup.form', $shipment) }}" class="btn-pickup whitespace-nowrap text-center shrink-0">
+                                    Continue to scheduling
+                                </a>
+                            @endif
+                        </div>
+                    </div>
+                @endif
             </div>
         @endif
 
@@ -312,27 +386,45 @@ a[href]:hover {
                             <span class="text-sm font-medium text-indigo-600">1</span>
                         </div>
                         <div>
-                            <h3 class="font-medium text-gray-900">Prepare Your Package</h3>
-                            <p class="text-sm text-gray-600">
-                                Have your package ready for pickup on {{ $shipment->pickup_date ? \Carbon\Carbon::parse($shipment->pickup_date)->format('M j, Y') : $shipment->preferred_ship_date->format('M j, Y') }} between
-                                @if($shipment->pickup_time_slot)
-                                    @switch($shipment->pickup_time_slot)
-                                        @case('morning')
-                                            between 8:00 AM and 12:00 PM
-                                            @break
-                                        @case('afternoon')
-                                            between 12:00 PM and 4:00 PM
-                                            @break
-                                        @case('evening')
-                                            between 4:00 PM and 7:00 PM
-                                            @break
-                                        @default
-                                            {{ $shipment->pickup_ready_time ? \Carbon\Carbon::parse($shipment->pickup_ready_time)->format('g:i A') : '9:00 AM' }} and {{ $shipment->pickup_close_time ? \Carbon\Carbon::parse($shipment->pickup_close_time)->format('g:i A') : '5:00 PM' }}
-                                    @endswitch
-                                @else
-                                    {{ $shipment->pickup_ready_time ? \Carbon\Carbon::parse($shipment->pickup_ready_time)->format('g:i A') : '9:00 AM' }} and {{ $shipment->pickup_close_time ? \Carbon\Carbon::parse($shipment->pickup_close_time)->format('g:i A') : '5:00 PM' }}
-                                @endif.
-                            </p>
+                            @if($shipment->pickup_scheduled)
+                                <h3 class="font-medium text-gray-900">Prepare Your Package</h3>
+                                <p class="text-sm text-gray-600">
+                                    Have your package ready for pickup on {{ $shipment->pickup_date ? \Carbon\Carbon::parse($shipment->pickup_date)->format('M j, Y') : $shipment->preferred_ship_date->format('M j, Y') }}
+                                    @php
+                                        $__fmt2 = function ($t) {
+                                            if (!$t) return null;
+                                            $t = strlen(trim($t)) === 5 ? trim($t).':00' : trim($t);
+                                            try {
+                                                return \Carbon\Carbon::createFromFormat('H:i:s', $t)->format('g:i A');
+                                            } catch (\Throwable) {
+                                                return $t;
+                                            }
+                                        };
+                                        $__r2 = $__fmt2($shipment->pickup_ready_time);
+                                        $__c2 = $__fmt2($shipment->pickup_close_time);
+                                    @endphp
+                                    @if($__r2 && $__c2)
+                                        (ready {{ $__r2 }} – driver access until {{ $__c2 }}).
+                                    @elseif($shipment->pickup_time_slot)
+                                        @switch($shipment->pickup_time_slot)
+                                            @case('morning') (between 8:00 AM and 12:00 PM). @break
+                                            @case('afternoon') (between 12:00 PM and 4:00 PM). @break
+                                            @case('evening') (between 4:00 PM and 7:00 PM). @break
+                                            @default — @break
+                                        @endswitch
+                                    @else
+                                        —
+                                    @endif
+                                </p>
+                            @else
+                                <h3 class="font-medium text-gray-900">Complete FedEx pickup scheduling</h3>
+                                <p class="text-sm text-gray-600">
+                                    Open <strong>Schedule FedEx pickup — check availability</strong> above. You’ll see FedEx cutoff and access-time rules for your address before confirming.
+                                </p>
+                                @if($pickupScheduleAllowed)
+                                    <a href="{{ route('shipment.pickup.form', $shipment) }}" class="mt-2 inline-block text-sm font-semibold text-amber-700 underline hover:text-amber-900">Go to pickup scheduling →</a>
+                                @endif
+                            @endif
                         </div>
                     </div>
                 @else

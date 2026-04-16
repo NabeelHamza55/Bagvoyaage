@@ -41,6 +41,9 @@ return [
         'secret_key' => env('FEDEX_SECRET_KEY'),
         'account_number' => env('FEDEX_ACCOUNT_NUMBER'),
         'meter_number' => env('FEDEX_METER_NUMBER'),
+        // Confirmed correct path (401 on invalid token = route exists): /pickup/v1/pickups/availabilities
+        // Docs: https://apis.fedex.com/pickup/v1/pickups/availabilities
+        'pickup_availability_path' => env('FEDEX_PICKUP_AVAILABILITY_PATH', '/pickup/v1/pickups/availabilities'),
     ],
 
     'paypal' => [

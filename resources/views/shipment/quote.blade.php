@@ -12,10 +12,42 @@
                 From: <span class="font-semibold">{{ $states[$shipment->origin_state] }}</span> →
                 To: <span class="font-semibold">{{ $states[$shipment->destination_state] }}</span>
             </p>
+            @if (session('success'))
+                <div class="mt-4 rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
+                    {{ session('success') }}
+                </div>
+            @endif
+            @if (session('error'))
+                <div class="mt-4 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900" role="alert">
+                    {{ session('error') }}
+                </div>
+            @endif
+            @if ($errors->any())
+                <div class="mt-4 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800" role="alert">
+                    <ul class="list-disc pl-5 space-y-0.5">
+                        @foreach ($errors->all() as $err)
+                            <li>{{ $err }}</li>
+                        @endforeach
+                    </ul>
+                </div>
+            @endif
         </div>
 
+        @php
+            $uiDraft = $quoteUiDraft ?? [];
+            $quotePickupType = old('pickup_type', $uiDraft['pickup_type'] ?? $shipment->pickup_type ?? 'DROPOFF');
+            if (! in_array($quotePickupType, ['PICKUP', 'DROPOFF'], true)) {
+                $quotePickupType = 'DROPOFF';
+            }
+            $validRateIds = collect($rates)->pluck('id')->map(static fn ($id) => (int) $id)->all();
+            $candidateRateId = old('selected_rate', $uiDraft['selected_rate_id'] ?? $shipment->selected_rate_id);
+            $quoteSelectedRateId = ($candidateRateId !== null && $candidateRateId !== '' && in_array((int) $candidateRateId, $validRateIds, true))
+                ? (int) $candidateRateId
+                : null;
+        @endphp
+
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            <!-- Shipment Summary -->
+            <!-- Shipment Summary + pickup choice (synced into main form via hidden field + JS) -->
             <div class="lg:col-span-1">
                 <div class="bg-white rounded-lg shadow-md p-6 sticky top-6">
                     <h2 class="text-xl font-semibold text-gray-900 mb-4">Shipment Summary</h2>
@@ -30,28 +62,72 @@
                             </div>
                         </div>
 
+                        @if($rates && count($rates) > 0)
                         <div>
-                            <h3 class="font-medium text-gray-900 mb-2">Delivery Method</h3>
-                            <p class="text-sm text-gray-600 capitalize">{{ $shipment->delivery_method }}</p>
-                            @if($shipment->delivery_method === 'pickup')
-                                <div class="mt-2 text-sm text-gray-600">
+                            <h3 class="font-medium text-gray-900 mb-2">Pickup or drop-off</h3>
+                            <p class="text-xs text-gray-500 mb-3">Choose together with a FedEx service on the right, then <strong>Continue</strong>. If you pick <strong>Pickup</strong>, you’ll enter address and FedEx times on the next page.</p>
+                            <div class="space-y-3">
+                                <label class="flex cursor-pointer items-start gap-2 rounded-lg border border-gray-200 p-3 text-sm hover:bg-gray-50">
+                                    <input
+                                        type="radio"
+                                        name="quote_pickup_ui"
+                                        value="DROPOFF"
+                                        class="js-quote-pickup-ui mt-0.5 text-indigo-600"
+                                        {{ $quotePickupType === 'DROPOFF' ? 'checked' : '' }}
+                                    >
+                                    <span>
+                                        <span class="font-medium text-gray-900">Drop-off</span>
+                                        <span class="block text-gray-600">You bring the package to FedEx.</span>
+                                    </span>
+                                </label>
+                                <label class="flex cursor-pointer items-start gap-2 rounded-lg border border-gray-200 p-3 text-sm hover:bg-gray-50">
+                                    <input
+                                        type="radio"
+                                        name="quote_pickup_ui"
+                                        value="PICKUP"
+                                        class="js-quote-pickup-ui mt-0.5 text-indigo-600"
+                                        {{ $quotePickupType === 'PICKUP' ? 'checked' : '' }}
+                                    >
+                                    <span>
+                                        <span class="font-medium text-gray-900">Pickup</span>
+                                        <span class="block text-gray-600">FedEx collects from you (address &amp; window next).</span>
+                                    </span>
+                                </label>
+                                @error('pickup_type')
+                                    <p class="text-sm text-red-600">{{ $message }}</p>
+                                @enderror
+                            </div>
+                            @if($quotePickupType === 'PICKUP' && $shipment->pickup_postal_code)
+                                <div class="mt-3 text-sm text-gray-700">
+                                    <p class="font-medium text-gray-900">Saved pickup location</p>
                                     <p>{{ $shipment->pickup_address }}</p>
-                                    <p>{{ $shipment->pickup_city }}, {{ $states[$shipment->pickup_state] }} {{ $shipment->pickup_postal_code }}</p>
+                                    <p>{{ $shipment->pickup_city }}, {{ $states[$shipment->pickup_state] ?? $shipment->pickup_state }} {{ $shipment->pickup_postal_code }}</p>
                                 </div>
                             @endif
                         </div>
+                        @endif
 
                         <div>
-                            <h3 class="font-medium text-gray-900 mb-2">Preferred Ship Date</h3>
-                            <p class="text-sm text-gray-600">{{ \Carbon\Carbon::parse($shipment->preferred_ship_date)->format('F j, Y') }}</p>
+                            <h3 class="font-medium text-gray-900 mb-2">Requested FedEx service</h3>
+                            <p class="text-sm text-gray-600">{{ str_replace('_', ' ', $shipment->service_type ?? '—') }}</p>
+                            @if($quotePickupType === 'PICKUP')
+                                <p class="mt-2 text-xs text-gray-500">Ship date is set from your pickup date before checkout.</p>
+                            @else
+                                <p class="mt-2 text-xs text-gray-500">Ship date for this quote: {{ $shipment->preferred_ship_date->format('F j, Y') }}.</p>
+                            @endif
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- Shipping Rates -->
+            <!-- Shipping Rates — single form: service + pickup_type -->
             <div class="lg:col-span-2">
                 @if($rates && count($rates) > 0)
+                    <form id="shipment-quote-form" method="POST" action="{{ route('shipment.select-rate', $shipment) }}"
+                        data-shipment-id="{{ $shipment->id }}"
+                        data-draft-url="{{ route('shipment.draft.quote', $shipment) }}">
+                        @csrf
+                        <input type="hidden" name="pickup_type" id="shipment-quote-pickup-type" value="{{ $quotePickupType }}">
                     <!-- Delivery Type Preference Header -->
                     <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
                         <div class="flex items-center justify-between">
@@ -63,10 +139,10 @@
                                 </div>
                                 <div class="ml-3">
                                     <h3 class="text-sm font-medium text-blue-800">
-                                        Available FedEx Services
+                                        Choose service &amp; delivery
                                     </h3>
                                     <p class="text-sm text-blue-600 mt-1">
-                                        Only the main FedEx service types are available. You can select any option below.
+                                        Pick <strong>one FedEx service</strong> and confirm <strong>pickup or drop-off</strong> in the summary (left), then continue.
                                     </p>
                                 </div>
                             </div>
@@ -81,8 +157,6 @@
                             </div>
                         </div>
                     </div>
-
-                    <form method="GET" action="{{ route('shipment.checkout', $shipment) }}">
                         <!-- Group rates by category and filter by delivery type preference -->
                         @php
                             $ratesCollection = collect($rates);
@@ -126,14 +200,14 @@
                                 <h3 class="text-lg font-semibold text-gray-900 mb-3 border-b pb-2">Ground Services</h3>
                                 <div class="space-y-3">
                                     @foreach($groundRates as $rate)
-                                        <div class="bg-white rounded-lg shadow-md overflow-hidden hover:shadow-lg transition-shadow duration-200">
+                                        <div class="bg-white rounded-lg shadow-md overflow-hidden hover:shadow-lg transition-shadow duration-200 border-2 border-transparent has-[:checked]:border-indigo-500 has-[:checked]:ring-2 has-[:checked]:ring-indigo-500 has-[:checked]:[&_.rate-price]:text-indigo-600">
                                             <label class="flex items-center p-4 cursor-pointer hover:bg-gray-50">
                                                 <input
                                                     type="radio"
                                                     name="selected_rate"
                                                     value="{{ $rate->id }}"
                                                     class="mr-4 text-indigo-600 w-4 h-4"
-                                                    required
+                                                    {{ (int) $quoteSelectedRateId === (int) $rate->id ? 'checked' : '' }}
                                                 >
                                                 <div class="flex-1">
                                                     <div class="flex justify-between items-start">
@@ -148,7 +222,7 @@
                                                             </p>
                                                         </div>
                                                         <div class="text-right">
-                                                            <div class="text-2xl font-bold text-indigo-600">
+                                                            <div class="rate-price text-2xl font-bold text-gray-900">
                                                                 ${{ number_format($rate->total_rate, 2) }}
                                                             </div>
                                                             <div class="text-xs text-gray-500 mt-1">
@@ -171,14 +245,14 @@
                                 <h3 class="text-lg font-semibold text-gray-900 mb-3 border-b pb-2">Express Services</h3>
                                 <div class="space-y-3">
                                     @foreach($expressRates as $rate)
-                                        <div class="bg-white rounded-lg shadow-md overflow-hidden hover:shadow-lg transition-shadow duration-200">
+                                        <div class="bg-white rounded-lg shadow-md overflow-hidden hover:shadow-lg transition-shadow duration-200 border-2 border-transparent has-[:checked]:border-indigo-500 has-[:checked]:ring-2 has-[:checked]:ring-indigo-500 has-[:checked]:[&_.rate-price]:text-indigo-600">
                                             <label class="flex items-center p-4 cursor-pointer hover:bg-gray-50">
                                                 <input
                                                     type="radio"
                                                     name="selected_rate"
                                                     value="{{ $rate->id }}"
                                                     class="mr-4 text-indigo-600 w-4 h-4"
-                                                    required
+                                                    {{ (int) $quoteSelectedRateId === (int) $rate->id ? 'checked' : '' }}
                                                 >
                                                 <div class="flex-1">
                                                     <div class="flex justify-between items-start">
@@ -193,7 +267,7 @@
                                                             </p>
                                                         </div>
                                                         <div class="text-right">
-                                                            <div class="text-2xl font-bold text-indigo-600">
+                                                            <div class="rate-price text-2xl font-bold text-gray-900">
                                                                 ${{ number_format($rate->total_rate, 2) }}
                                                             </div>
                                                             <div class="text-xs text-gray-500 mt-1">
@@ -216,14 +290,14 @@
                                 <h3 class="text-lg font-semibold text-gray-900 mb-3 border-b pb-2">Overnight Services</h3>
                                 <div class="space-y-3">
                                     @foreach($overnightRates as $rate)
-                                        <div class="bg-white rounded-lg shadow-md overflow-hidden hover:shadow-lg transition-shadow duration-200">
+                                        <div class="bg-white rounded-lg shadow-md overflow-hidden hover:shadow-lg transition-shadow duration-200 border-2 border-transparent has-[:checked]:border-indigo-500 has-[:checked]:ring-2 has-[:checked]:ring-indigo-500 has-[:checked]:[&_.rate-price]:text-indigo-600">
                                             <label class="flex items-center p-4 cursor-pointer hover:bg-gray-50">
                                                 <input
                                                     type="radio"
                                                     name="selected_rate"
                                                     value="{{ $rate->id }}"
                                                     class="mr-4 text-indigo-600 w-4 h-4"
-                                                    required
+                                                    {{ (int) $quoteSelectedRateId === (int) $rate->id ? 'checked' : '' }}
                                                 >
                                                 <div class="flex-1">
                                                     <div class="flex justify-between items-start">
@@ -238,7 +312,7 @@
                                                             </p>
                                                         </div>
                                                         <div class="text-right">
-                                                            <div class="text-2xl font-bold text-indigo-600">
+                                                            <div class="rate-price text-2xl font-bold text-gray-900">
                                                                 ${{ number_format($rate->total_rate, 2) }}
                                                             </div>
                                                             <div class="text-xs text-gray-500 mt-1">
@@ -261,14 +335,14 @@
                                 <h3 class="text-lg font-semibold text-gray-900 mb-3 border-b pb-2">Other Services</h3>
                                 <div class="space-y-3">
                                     @foreach($otherRates as $rate)
-                                        <div class="bg-white rounded-lg shadow-md overflow-hidden hover:shadow-lg transition-shadow duration-200">
+                                        <div class="bg-white rounded-lg shadow-md overflow-hidden hover:shadow-lg transition-shadow duration-200 border-2 border-transparent has-[:checked]:border-indigo-500 has-[:checked]:ring-2 has-[:checked]:ring-indigo-500 has-[:checked]:[&_.rate-price]:text-indigo-600">
                                             <label class="flex items-center p-4 cursor-pointer hover:bg-gray-50">
                                                 <input
                                                     type="radio"
                                                     name="selected_rate"
                                                     value="{{ $rate->id }}"
                                                     class="mr-4 text-indigo-600 w-4 h-4"
-                                                    required
+                                                    {{ (int) $quoteSelectedRateId === (int) $rate->id ? 'checked' : '' }}
                                                 >
                                                 <div class="flex-1">
                                                     <div class="flex justify-between items-start">
@@ -283,7 +357,7 @@
                                                             </p>
                                                         </div>
                                                         <div class="text-right">
-                                                            <div class="text-2xl font-bold text-indigo-600">
+                                                            <div class="rate-price text-2xl font-bold text-gray-900">
                                                                 ${{ number_format($rate->total_rate, 2) }}
                                                             </div>
                                                             <div class="text-xs text-gray-500 mt-1">
@@ -310,12 +384,13 @@
                                 </div>
                                 <h3 class="text-lg font-medium text-yellow-800 mb-2">No rates match your delivery preference</h3>
                                 <p class="text-yellow-700 mb-4">
-                                    We couldn't find any {{ $deliveryType }} delivery options for this route.
-                                    Please try selecting a different delivery type or check back later.
+                                    We couldn’t find any rates for this route with the current package and service filter.
+                                    Try adjusting your shipment details or service type on the previous step.
                                 </p>
-                                <a href="{{ route('shipment.create', [
+                                <a href="{{ route('shipment.form', [
                                     'origin_state' => $shipment->origin_state,
-                                    'destination_state' => $shipment->destination_state
+                                    'destination_state' => $shipment->destination_state,
+                                    'resume' => $shipment->id,
                                 ]) }}" class="bg-yellow-600 text-white px-6 py-3 rounded-md font-medium hover:bg-yellow-700">
                                     Try Different Options
                                 </a>
@@ -323,14 +398,14 @@
                         @endif
 
                         <div class="mt-8 flex justify-between">
-                            <a href="{{ route('home') }}" class="bg-gray-500 text-white px-6 py-3 rounded-md font-medium hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2">
-                                Back to Home
+                            <a href="{{ route('shipment.form', ['origin_state' => $shipment->origin_state, 'destination_state' => $shipment->destination_state, 'resume' => $shipment->id]) }}" class="bg-gray-500 text-white px-6 py-3 rounded-md font-medium hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2">
+                                Back to shipment details
                             </a>
                             <button
                                 type="submit"
                                 class="bg-indigo-600 text-white px-8 py-3 rounded-md font-medium hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
                             >
-                                Continue to Checkout
+                                Continue
                             </button>
                         </div>
                     </form>
@@ -359,10 +434,135 @@
 @push('scripts')
 <script>
     document.addEventListener('DOMContentLoaded', function() {
-        // Auto-select first rate if only one option
+        const pickupHidden = document.getElementById('shipment-quote-pickup-type');
+        function syncPickupTypeHidden() {
+            const ui = document.querySelector('input[name="quote_pickup_ui"]:checked');
+            if (pickupHidden && ui) {
+                pickupHidden.value = ui.value;
+            }
+        }
+        document.querySelectorAll('.js-quote-pickup-ui').forEach(function (el) {
+            el.addEventListener('change', syncPickupTypeHidden);
+        });
+        syncPickupTypeHidden();
+
+        const quoteForm = document.getElementById('shipment-quote-form');
+        const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+
+        function quoteStorageKey(id) {
+            return 'bagvoyage_quote_ui_' + id;
+        }
+
+        function readQuoteSnapshot() {
+            syncPickupTypeHidden();
+            const rateEl = quoteForm ? quoteForm.querySelector('input[name="selected_rate"]:checked') : null;
+            return {
+                pickup_type: pickupHidden ? pickupHidden.value : '',
+                selected_rate_id: rateEl ? parseInt(rateEl.value, 10) : null,
+            };
+        }
+
+        function applyQuoteSnapshot(snap) {
+            if (!snap) return;
+            if (snap.pickup_type === 'PICKUP' || snap.pickup_type === 'DROPOFF') {
+                const ui = document.querySelector('input[name="quote_pickup_ui"][value="' + snap.pickup_type + '"]');
+                if (ui) {
+                    ui.checked = true;
+                    syncPickupTypeHidden();
+                }
+            }
+            if (snap.selected_rate_id && quoteForm) {
+                const r = quoteForm.querySelector('input[name="selected_rate"][value="' + snap.selected_rate_id + '"]');
+                if (r) {
+                    r.checked = true;
+                }
+            }
+        }
+
+        function persistQuoteClient(snap, shipmentId) {
+            try {
+                sessionStorage.setItem(quoteStorageKey(shipmentId), JSON.stringify(snap));
+            } catch (e) { /* private mode */ }
+        }
+
+        let quoteDraftTimer = null;
+        function scheduleQuoteDraftSave() {
+            if (!quoteForm || !quoteForm.dataset.draftUrl) return;
+            clearTimeout(quoteDraftTimer);
+            quoteDraftTimer = setTimeout(function () {
+                const snap = readQuoteSnapshot();
+                persistQuoteClient(snap, quoteForm.dataset.shipmentId);
+                if (!snap.pickup_type) return;
+                fetch(quoteForm.dataset.draftUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json',
+                        'X-CSRF-TOKEN': csrf,
+                        'X-Requested-With': 'XMLHttpRequest',
+                    },
+                    body: JSON.stringify({
+                        pickup_type: snap.pickup_type,
+                        selected_rate_id: snap.selected_rate_id,
+                    }),
+                }).then(function (res) {
+                    if (res.status === 422) {
+                        try {
+                            sessionStorage.removeItem(quoteStorageKey(quoteForm.dataset.shipmentId));
+                        } catch (e) { /* ignore */ }
+                    }
+                }).catch(function () { /* offline */ });
+            }, 350);
+        }
+
+        if (quoteForm) {
+            window.addEventListener('pageshow', function (e) {
+                if (!e.persisted) return;
+                const id = quoteForm.dataset.shipmentId;
+                try {
+                    const raw = sessionStorage.getItem(quoteStorageKey(id));
+                    if (raw) {
+                        applyQuoteSnapshot(JSON.parse(raw));
+                    }
+                } catch (err) { /* ignore */ }
+            });
+
+            document.querySelectorAll('.js-quote-pickup-ui').forEach(function (el) {
+                el.addEventListener('change', scheduleQuoteDraftSave);
+            });
+            quoteForm.querySelectorAll('input[name="selected_rate"]').forEach(function (el) {
+                el.addEventListener('change', scheduleQuoteDraftSave);
+            });
+            // Drop client snapshot if it references a rate row that is not on this page (stale after re-quote).
+            try {
+                const raw = sessionStorage.getItem(quoteStorageKey(quoteForm.dataset.shipmentId));
+                if (raw) {
+                    const snap = JSON.parse(raw);
+                    if (snap && snap.selected_rate_id) {
+                        const match = quoteForm.querySelector('input[name="selected_rate"][value="' + snap.selected_rate_id + '"]');
+                        if (!match) {
+                            sessionStorage.removeItem(quoteStorageKey(quoteForm.dataset.shipmentId));
+                        }
+                    }
+                }
+            } catch (e) { /* ignore */ }
+            scheduleQuoteDraftSave();
+        }
+
+        if (quoteForm) {
+            quoteForm.addEventListener('submit', function () {
+                syncPickupTypeHidden();
+                try {
+                    sessionStorage.removeItem(quoteStorageKey(quoteForm.dataset.shipmentId));
+                } catch (err) { /* ignore */ }
+            });
+        }
+
+        // Auto-select first rate if only one option and nothing is checked yet
         const rateInputs = document.querySelectorAll('input[name="selected_rate"]');
-        if (rateInputs.length === 1) {
+        if (rateInputs.length === 1 && !document.querySelector('input[name="selected_rate"]:checked')) {
             rateInputs[0].checked = true;
+            scheduleQuoteDraftSave();
         }
 
         // Toggle between filtered and all rates
@@ -384,17 +584,14 @@
                     // Update header message
                     const header = document.querySelector('.bg-blue-50 h3');
                     if (header) {
-                        header.innerHTML = 'Showing <span class="font-semibold">all available</span> rates';
+                        header.textContent = 'Showing all available rates';
                     }
                 } else {
-                    // Show only filtered rates (this would require server-side filtering)
-                    // For now, just change the button text
                     toggleButton.textContent = 'Show All Rates';
 
-                    // Update header message
                     const header = document.querySelector('.bg-blue-50 h3');
                     if (header) {
-                        header.innerHTML = 'Available FedEx Services';
+                        header.textContent = 'Choose service & delivery';
                     }
                 }
             });

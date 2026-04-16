@@ -190,12 +190,6 @@
                 const minDateValue = getMinPickupDate();
                 
                 if (selectedValue < minDateValue) {
-                    const now = new Date();
-                    if (now.getHours() >= 15) {
-                        alert('It is past 3 PM cutoff time. Pickup must be scheduled for tomorrow or later.');
-                    } else {
-                        alert('Pickup date cannot be in the past.');
-                    }
                     this.value = minDateValue;
                 }
             });
@@ -209,7 +203,6 @@
                     
                     if (selectedValue < minDateValue) {
                         e.preventDefault();
-                        alert('Invalid pickup date. Please select a valid date.');
                         pickupDateInput.value = minDateValue;
                         pickupDateInput.focus();
                         return false;
@@ -262,12 +255,6 @@
                 const minDateValue = getMinPickupDate();
                 
                 if (selectedValue < minDateValue) {
-                    const now = new Date();
-                    if (now.getHours() >= 15) {
-                        alert('It is past 3 PM cutoff time. Pickup date must be tomorrow or later.');
-                    } else {
-                        alert('Pickup date cannot be in the past. Please select a valid date.');
-                    }
                     this.value = minDateValue;
                 }
             });
@@ -281,7 +268,6 @@
                     
                     if (selectedValue < minDateValue) {
                         e.preventDefault();
-                        alert('Invalid pickup date. Please select a valid date.');
                         pickupDateInput.value = minDateValue;
                         pickupDateInput.focus();
                         return false;

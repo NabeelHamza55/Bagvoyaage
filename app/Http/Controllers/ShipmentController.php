@@ -4,10 +4,13 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use App\Models\Shipment;
+use App\Models\ShipmentRate;
 use App\Services\NotificationService;
 use App\Services\StateService;
 use App\Services\FedExServiceFixed;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\Rule;
 
 class ShipmentController extends Controller
 {
@@ -26,7 +29,15 @@ class ShipmentController extends Controller
     public function index()
     {
         $states = $this->fedexService->getAvailableStates();
-        return view('shipment.index', compact('states'));
+        $stateOptions = collect($states)->map(fn (string $name, string $code) => [
+            'code' => $code,
+            'name' => $name,
+        ])->values()->all();
+
+        return view('shipment.index', [
+            'states' => $states,
+            'stateOptions' => $stateOptions,
+        ]);
     }
 
     /**
@@ -34,8 +45,19 @@ class ShipmentController extends Controller
      */
     public function showCreateForm(Request $request)
     {
-        // Redirect to homepage if no states are in the session
-        if (!$request->has('origin_state') || !$request->has('destination_state')) {
+        $origin = $request->query('origin_state');
+        $dest = $request->query('destination_state');
+
+        // Browser "back" often lands here without query params — restore last states from session.
+        if (! $origin || ! $dest) {
+            $ctx = session('shipment_create_context');
+            if (is_array($ctx) && ! empty($ctx['origin_state']) && ! empty($ctx['destination_state'])) {
+                return redirect()->route('shipment.form', [
+                    'origin_state' => $ctx['origin_state'],
+                    'destination_state' => $ctx['destination_state'],
+                ]);
+            }
+
             return redirect()->route('home')
                 ->withErrors(['error' => 'Please select origin and destination states first']);
         }
@@ -45,12 +67,34 @@ class ShipmentController extends Controller
             'destination_state' => 'required|string|size:2',
         ]);
 
+        session()->put('shipment_create_context', [
+            'origin_state' => $origin,
+            'destination_state' => $dest,
+        ]);
+
         $states = $this->fedexService->getAvailableStates();
+
+        $formDefaults = [];
+        $resumeShipmentId = null;
+        if ($request->filled('resume')) {
+            $draft = Shipment::query()
+                ->whereKey((int) $request->query('resume'))
+                ->where('origin_state', $origin)
+                ->where('destination_state', $dest)
+                ->whereIn('status', ['pending', 'quote_received', 'payment_pending'])
+                ->first();
+            if ($draft) {
+                $formDefaults = $this->createFormDefaultsFromShipment($draft);
+                $resumeShipmentId = $draft->id;
+            }
+        }
 
         return view('shipment.create', [
             'states' => $states,
-            'origin_state' => $request->origin_state,
-            'destination_state' => $request->destination_state,
+            'origin_state' => $origin,
+            'destination_state' => $dest,
+            'formDefaults' => $formDefaults,
+            'resumeShipmentId' => $resumeShipmentId,
         ]);
     }
 
@@ -70,6 +114,8 @@ class ShipmentController extends Controller
             'states' => $states,
             'origin_state' => $request->origin_state,
             'destination_state' => $request->destination_state,
+            'formDefaults' => [],
+            'resumeShipmentId' => null,
         ]);
     }
 
@@ -89,22 +135,12 @@ class ShipmentController extends Controller
             'sender_city' => 'required|string|max:100',
             'sender_state' => 'required|string|size:2',
             'sender_zipcode' => 'required|string|max:10',
-            // Pickup/Delivery Method
+            // Pickup/Delivery Method (pickup address & date collected after rates, before checkout)
             'pickup_type' => 'required|in:PICKUP,DROPOFF',
             'delivery_method' => 'required|in:pickup,dropoff',
             'packaging_type' => 'required|string|max:50',
-            'service_type' => 'nullable|string|max:50',
-            // Pickup Address (conditional)
-            'pickup_address' => 'nullable|string|max:500',
-            'pickup_city' => 'nullable|string|max:100',
-            'pickup_city_custom' => 'nullable|string|max:100',
-            'pickup_zip' => 'nullable|string|max:10',
-            // Pickup Scheduling (conditional)
-            'pickup_date' => 'nullable|date|after:today',
-            'pickup_time_slot' => 'nullable|in:morning,afternoon,evening',
-            'pickup_ready_time' => 'nullable|date_format:H:i',
-            'pickup_close_time' => 'nullable|date_format:H:i|after:pickup_ready_time',
-            'pickup_instructions' => 'nullable|string|max:500',
+            // FedEx service the customer wants pricing for (filters rate results)
+            'service_type' => 'required|string|in:FEDEX_GROUND,FEDEX_2_DAY,PRIORITY_OVERNIGHT',
             // Recipient Information (Required)
             'recipient_name' => 'required|string|max:255',
             'recipient_phone' => 'required|string|max:20',
@@ -112,6 +148,7 @@ class ShipmentController extends Controller
             'recipient_city' => 'required|string|max:100',
             'recipient_city_custom' => 'nullable|string|max:100',
             'recipient_zip' => 'required|string|max:10',
+            'resume_shipment_id' => 'nullable|integer',
             // Package Information (Required)
             'package_length' => 'nullable|numeric|min:0.01|max:108',
             'package_width' => 'nullable|numeric|min:0.01|max:70',
@@ -124,49 +161,10 @@ class ShipmentController extends Controller
             'number_of_bags' => 'required|integer|min:1|max:10',
             'declared_value' => 'required|numeric|min:1.00|max:50000.00',
             'currency_code' => 'required|string|size:3',
-            // Shipping Preferences
-            'preferred_ship_date' => 'required|date|after_or_equal:today',
         ]);
 
-        // Additional validation for pickup fields
-        if ($validated['pickup_type'] === 'PICKUP') {
-            $cutoffHour = 15; // 3 PM
-            $now = \Carbon\Carbon::now();
-
-            // Pickup can be today if before cutoff, otherwise must be tomorrow or later
-            $minPickupDate = ($now->hour >= $cutoffHour) ? 'after:today' : 'after_or_equal:today';
-
-            $request->validate([
-                'pickup_address' => 'required|string|max:500',
-                'pickup_city' => 'required|string|max:100',
-                'pickup_city_custom' => 'nullable|string|max:100',
-                'pickup_zip' => 'required|string|max:10',
-                'pickup_date' => 'required|date|' . $minPickupDate,
-                'pickup_time_slot' => 'required|in:morning,afternoon,evening',
-                // pickup_ready_time and pickup_close_time are now auto-generated from pickup_time_slot
-                'pickup_ready_time' => 'nullable|date_format:H:i',
-                'pickup_close_time' => 'nullable|date_format:H:i',
-            ]);
-        }
-
-        // Convert time slot to ready/close times if provided
-        if (isset($validated['pickup_time_slot']) && !isset($validated['pickup_ready_time'])) {
-            $timeSlot = $validated['pickup_time_slot'];
-            switch ($timeSlot) {
-                case 'morning':
-                    $validated['pickup_ready_time'] = '08:00';
-                    $validated['pickup_close_time'] = '12:00';
-                    break;
-                case 'afternoon':
-                    $validated['pickup_ready_time'] = '12:00';
-                    $validated['pickup_close_time'] = '16:00';
-                    break;
-                case 'evening':
-                    $validated['pickup_ready_time'] = '16:00';
-                    $validated['pickup_close_time'] = '19:00';
-                    break;
-            }
-        }
+        // Placeholder ship date for FedEx rate shopping only; for PICKUP it is replaced from pickup date before checkout.
+        $validated['preferred_ship_date'] = $this->defaultPreferredShipDateForQuote();
 
         // Auto-set weight and dimensions based on bag type
         if (isset($validated['bag_type']) && isset($validated['number_of_bags'])) {
@@ -193,12 +191,16 @@ class ShipmentController extends Controller
             }
         }
 
-        // Create shipment data without ZIP validation
+        // Create shipment data (pickup location & schedule are filled after rates, before checkout)
         $shipmentData = [
             ...$validated,
             'pickup_state' => $validated['origin_state'],
-            'pickup_city' => $validated['pickup_city'] === 'other' ? $validated['pickup_city_custom'] : $validated['pickup_city'],
-            'pickup_postal_code' => $validated['pickup_zip'] ?? null,
+            'pickup_city' => null,
+            'pickup_postal_code' => null,
+            'pickup_address' => null,
+            'pickup_date' => null,
+            'pickup_time_slot' => null,
+            'pickup_instructions' => null,
             'recipient_state' => $validated['destination_state'],
             'recipient_city' => $validated['recipient_city'] === 'other' ? $validated['recipient_city_custom'] : $validated['recipient_city'],
             'recipient_postal_code' => $validated['recipient_zip'],
@@ -206,55 +208,72 @@ class ShipmentController extends Controller
             'origin_country' => 'US',
             'destination_country' => 'US',
         ];
+        unset($shipmentData['resume_shipment_id']);
 
-        $shipment = Shipment::create($shipmentData);
+        $resumeId = $request->input('resume_shipment_id');
+        $existing = null;
+        if ($resumeId) {
+            $existing = Shipment::query()
+                ->whereKey((int) $resumeId)
+                ->where('origin_state', $validated['origin_state'])
+                ->where('destination_state', $validated['destination_state'])
+                ->whereIn('status', ['pending', 'quote_received', 'payment_pending'])
+                ->first();
+        }
+
+        if ($existing) {
+            $existing->update($shipmentData);
+            $existing->rates()->delete();
+            $existing->update(['selected_rate_id' => null]);
+            $shipment = $existing->fresh();
+        } else {
+            $shipment = Shipment::create($shipmentData);
+        }
 
         try {
             // Get FedEx rates
             $rates = $this->fedexService->getRates($shipment);
             $shipment->update(['status' => 'quote_received']);
 
-            // Check if we got any rates back
+            // Rate row IDs may have changed — drop any stale quote-page UI draft for this shipment.
+            session()->forget('shipment_quote_ui.' . $shipment->id);
+
+            $this->rememberShipmentCreateStates($shipment);
+
+            // POST/Redirect/GET: rates page must be a GET URL so browser "back" from checkout works.
             if (empty($rates)) {
-                return view('shipment.quote', [
-                    'shipment' => $shipment,
-                    'rates' => [],
-                    'states' => $this->fedexService->getAvailableStates(),
-                    'error' => 'No shipping rates available for this package and destination.'
-                ]);
+                return redirect()->route('shipment.rates', $shipment)
+                    ->with('error', 'No shipping rates for the FedEx service you selected on this route. Try another service or adjust package details.');
             }
 
-            return view('shipment.quote', [
-                'shipment' => $shipment,
-                'rates' => $rates,
-                'states' => $this->fedexService->getAvailableStates(),
-            ]);
+            return redirect()->route('shipment.rates', $shipment)
+                ->with('success', 'Your quote is ready. Choose pickup or drop-off and a FedEx service, then continue.');
         } catch (\Exception $e) {
             // Log the error
             Log::error('FedEx Rate Error in Controller: ' . $e->getMessage(), [
-                'shipment_id' => $shipment->id,
+                'shipment_id' => $shipment->id ?? null,
                 'package_dimensions' => [
-                    'length' => $shipment->package_length,
-                    'width' => $shipment->package_width,
-                    'height' => $shipment->package_height,
-                    'weight' => $shipment->package_weight
-                ]
+                    'length' => $shipment->package_length ?? null,
+                    'width' => $shipment->package_width ?? null,
+                    'height' => $shipment->package_height ?? null,
+                    'weight' => $shipment->package_weight ?? null,
+                ],
             ]);
 
-            // Extract error message for user
             $errorMessage = 'Unable to get shipping rates';
 
-            // Check if it's a package dimension error
             if (strpos($e->getMessage(), 'PACKAGE.DIMENSIONS.EXCEEDED') !== false) {
                 $errorMessage = 'Package dimensions or weight exceed FedEx limits. Please reduce the size or weight of your package.';
-            }
-            // Check if it's a rate request type error
-            elseif (strpos($e->getMessage(), 'RATEREQUESTTYPE.REQUIRED') !== false) {
+            } elseif (strpos($e->getMessage(), 'RATEREQUESTTYPE.REQUIRED') !== false) {
                 $errorMessage = 'There was an issue with the shipping rate request. Please try again.';
+            } elseif (strpos($e->getMessage(), 'FedX API') !== false) {
+                $errorMessage = 'FedEx shipping service is temporarily unavailable. Please try again later.';
             }
-            // General API error
-            elseif (strpos($e->getMessage(), 'FedX API') !== false) {
-                $errorMessage = 'FedX shipping service is temporarily unavailable. Please try again later.';
+
+            if (isset($shipment) && $shipment->exists) {
+                $this->rememberShipmentCreateStates($shipment);
+
+                return redirect()->route('shipment.rates', $shipment)->withErrors(['error' => $errorMessage]);
             }
 
             return back()->withErrors(['error' => $errorMessage])->withInput();
@@ -262,29 +281,401 @@ class ShipmentController extends Controller
     }
 
     /**
+     * Show stored rates again (e.g. after checkout redirect when rate was missing).
+     */
+    public function showRates(Shipment $shipment)
+    {
+        if ($shipment->rates->isEmpty()) {
+            return redirect()->route('home')->withErrors(['error' => 'No saved rates for this shipment. Start a new quote.']);
+        }
+
+        $this->rememberShipmentCreateStates($shipment);
+
+        // User used "Back" from checkout (GET) — leave payment_pending so they can change rate/pickup cleanly.
+        if ($shipment->status === 'payment_pending') {
+            $shipment->update(['status' => 'quote_received']);
+        }
+
+        $this->synchronizeShipmentSelectedRate($shipment);
+
+        $quoteUiDraft = $this->sanitizeQuoteUiDraftForShipment($shipment);
+
+        return view('shipment.quote', [
+            'shipment' => $shipment,
+            'rates' => $shipment->rates,
+            'states' => $this->fedexService->getAvailableStates(),
+            'quoteUiDraft' => $quoteUiDraft,
+        ]);
+    }
+
+    /**
+     * Drop stale quote-page draft selections (e.g. old rate row IDs after re-quote).
+     *
+     * @return array<string, mixed>
+     */
+    private function sanitizeQuoteUiDraftForShipment(Shipment $shipment): array
+    {
+        $key = 'shipment_quote_ui.' . $shipment->id;
+        $draft = session($key, []);
+        $validIds = $shipment->rates()->pluck('id')->map(static fn ($id) => (int) $id)->all();
+
+        if (! empty($draft['selected_rate_id']) && ! in_array((int) $draft['selected_rate_id'], $validIds, true)) {
+            $draft['selected_rate_id'] = null;
+        }
+        if (isset($draft['pickup_type']) && ! in_array($draft['pickup_type'], ['PICKUP', 'DROPOFF'], true)) {
+            unset($draft['pickup_type']);
+        }
+
+        session([$key => $draft]);
+
+        return $draft;
+    }
+
+    /**
+     * Keep shipments.selected_rate_id (source of truth) and shipment_rates.is_selected aligned.
+     * Repairs orphaned FKs after rate rows are rebuilt and legacy rows that only had the boolean flag set.
+     */
+    private function synchronizeShipmentSelectedRate(Shipment $shipment): void
+    {
+        $shipment->loadMissing('rates');
+
+        if ($shipment->rates->isEmpty()) {
+            if ($shipment->selected_rate_id !== null) {
+                $shipment->update(['selected_rate_id' => null]);
+                $shipment->refresh();
+            }
+
+            return;
+        }
+
+        $valid = $shipment->rates->pluck('id')->map(static fn ($id) => (int) $id)->all();
+        $fk = $shipment->selected_rate_id ? (int) $shipment->selected_rate_id : null;
+
+        if ($fk && ! in_array($fk, $valid, true)) {
+            $fk = null;
+        }
+
+        if ($fk === null) {
+            $flagged = $shipment->rates->first(static fn (ShipmentRate $r) => (bool) $r->is_selected);
+            if ($flagged) {
+                $fk = (int) $flagged->id;
+            }
+        }
+
+        DB::transaction(function () use ($shipment, $fk) {
+            if ($fk === null) {
+                $shipment->rates()->update(['is_selected' => false]);
+                if ($shipment->selected_rate_id !== null) {
+                    $shipment->update(['selected_rate_id' => null]);
+                }
+
+                return;
+            }
+
+            $shipment->rates()->where('id', '!=', $fk)->update(['is_selected' => false]);
+            $shipment->rates()->where('id', $fk)->update(['is_selected' => true]);
+            if ((int) $shipment->selected_rate_id !== $fk) {
+                $shipment->update(['selected_rate_id' => $fk]);
+            }
+        });
+
+        $shipment->refresh();
+    }
+
+    /**
+     * Save quote-page selections (pickup vs drop-off + FedEx rate) for reload / navigation recovery.
+     */
+    public function saveQuoteDraft(Request $request, Shipment $shipment)
+    {
+        if ($shipment->rates->isEmpty()) {
+            return response()->json(['ok' => false], 404);
+        }
+
+        $validated = $request->validate([
+            'pickup_type' => 'required|in:PICKUP,DROPOFF',
+            'selected_rate_id' => 'nullable|integer',
+        ]);
+
+        if (! empty($validated['selected_rate_id'])) {
+            if (! $shipment->rates()->whereKey((int) $validated['selected_rate_id'])->exists()) {
+                return response()->json(['ok' => false, 'error' => 'invalid_rate'], 422);
+            }
+        }
+
+        session([
+            'shipment_quote_ui.' . $shipment->id => [
+                'pickup_type' => $validated['pickup_type'],
+                'selected_rate_id' => $validated['selected_rate_id'] ?? null,
+            ],
+        ]);
+
+        return response()->json(['ok' => true]);
+    }
+
+    /**
+     * Save pickup-details (phase 1) field values for reload / navigation recovery.
+     */
+    public function savePickupDraft(Request $request, Shipment $shipment)
+    {
+        if ($shipment->pickup_type !== 'PICKUP') {
+            return response()->json(['ok' => false], 404);
+        }
+
+        $validated = $request->validate([
+            'pickup_address' => 'nullable|string|max:500',
+            'pickup_city' => 'nullable|string|max:100',
+            'pickup_city_custom' => 'nullable|string|max:100',
+            'pickup_zip' => 'nullable|string|max:10',
+            'pickup_date' => 'nullable|date',
+            'pickup_instructions' => 'nullable|string|max:500',
+            'pickup_ready_time' => 'nullable|string|max:20',
+            'pickup_close_time' => 'nullable|string|max:20',
+        ]);
+
+        $key = 'shipment_pickup_ui.' . $shipment->id;
+        $merged = array_merge(session($key, []), array_filter(
+            $validated,
+            static fn ($v) => $v !== null && $v !== ''
+        ));
+        session([$key => $merged]);
+
+        return response()->json(['ok' => true]);
+    }
+
+    /**
+     * Persist selected rate after quote page, then pickup details (if pickup) or checkout.
+     */
+    public function selectRate(Request $request, Shipment $shipment)
+    {
+        $validated = $request->validate([
+            'selected_rate' => [
+                'required',
+                'integer',
+                Rule::exists('shipment_rates', 'id')->where('shipment_id', $shipment->id),
+            ],
+            'pickup_type' => 'required|in:PICKUP,DROPOFF',
+        ]);
+
+        // New rate / pickup path — drop cached FedEx availability from a previous attempt.
+        session()->forget('pickup_availability');
+        session()->forget('shipment_quote_ui.' . $shipment->id);
+
+        $selectedRate = ShipmentRate::query()
+            ->where('id', $validated['selected_rate'])
+            ->where('shipment_id', $shipment->id)
+            ->first();
+
+        if (! $selectedRate) {
+            return redirect()->route('shipment.rates', $shipment)->withErrors(['error' => 'Invalid rate selection.']);
+        }
+
+        $this->applyPickupPreference($shipment, $validated['pickup_type']);
+        $shipment->refresh();
+
+        DB::transaction(function () use ($shipment, $selectedRate) {
+            $shipment->rates()->update(['is_selected' => false]);
+            $selectedRate->update(['is_selected' => true]);
+            $shipment->update(['selected_rate_id' => $selectedRate->id]);
+        });
+        $shipment->refresh();
+
+        if ($shipment->pickup_type === 'PICKUP') {
+            return redirect()->route('shipment.pickup-details', $shipment);
+        }
+
+        session()->forget('shipment_pickup_ui.' . $shipment->id);
+
+        return redirect()->route('shipment.checkout', $shipment);
+    }
+
+    /**
+     * Pickup address & window — required before checkout when pickup is selected.
+     */
+    public function showPickupDetails(Request $request, Shipment $shipment)
+    {
+        if ($shipment->pickup_type !== 'PICKUP') {
+            return redirect()->route('shipment.checkout', $shipment);
+        }
+
+        $this->synchronizeShipmentSelectedRate($shipment);
+
+        if (!$shipment->selectedRate) {
+            return redirect()->route('shipment.rates', $shipment)
+                ->withErrors(['error' => 'Please choose a shipping rate first.']);
+        }
+
+        if ($request->boolean('reset')) {
+            session()->forget('pickup_availability');
+            session()->forget('shipment_pickup_ui.' . $shipment->id);
+        }
+
+        // Stored in session (not flash) after Phase-1 check so refresh keeps Step 2.
+        $availability = session('pickup_availability');
+
+        return view('shipment.pickup-details', [
+            'shipment'       => $shipment,
+            'states'         => $this->fedexService->getAvailableStates(),
+            'availability'   => $availability,
+            'pickupUiDraft'  => session('shipment_pickup_ui.' . $shipment->id, []),
+        ]);
+    }
+
+    /**
+     * Two-phase pickup details handler.
+     *
+     * Phase 1 (action=check):  validate address+date, call FedEx availability, flash result, redirect back.
+     * Phase 2 (action=confirm): validate user-chosen times from FedEx options, save, go to checkout.
+     */
+    public function savePickupDetails(Request $request, Shipment $shipment)
+    {
+        if ($shipment->pickup_type !== 'PICKUP') {
+            return redirect()->route('shipment.checkout', $shipment);
+        }
+
+        $this->synchronizeShipmentSelectedRate($shipment);
+
+        if (!$shipment->selectedRate) {
+            return redirect()->route('shipment.rates', $shipment)
+                ->withErrors(['error' => 'Please choose a shipping rate first.']);
+        }
+
+        $action = $request->input('action', 'check');
+
+        /* ──────────────────────────────────────────────────────────────────
+         * PHASE 1 — Check FedEx availability for the given address & date
+         * ────────────────────────────────────────────────────────────────── */
+        if ($action === 'check') {
+            $cutoffHour    = 15;
+            $now           = \Carbon\Carbon::now();
+            $minPickupRule = ($now->hour >= $cutoffHour) ? 'after:today' : 'after_or_equal:today';
+
+            $validated = $request->validate([
+                'pickup_address'      => 'required|string|max:500',
+                'pickup_city'         => 'required|string|max:100',
+                'pickup_city_custom'  => 'nullable|string|max:100',
+                'pickup_zip'          => 'required|string|max:10',
+                'pickup_date'         => 'required|date|' . $minPickupRule,
+                'pickup_instructions' => 'nullable|string|max:500',
+            ]);
+
+            $pickupCity = $validated['pickup_city'] === 'other'
+                ? ($validated['pickup_city_custom'] ?? '')
+                : $validated['pickup_city'];
+
+            $pickupDateCarbon = \Carbon\Carbon::parse($validated['pickup_date'])->startOfDay();
+            while ($pickupDateCarbon->isWeekend()) {
+                $pickupDateCarbon->addDay();
+            }
+
+            // Persist address fields so Phase-2 form stays pre-filled.
+            $shipment->update([
+                'pickup_address'      => $validated['pickup_address'],
+                'pickup_city'         => $pickupCity,
+                'pickup_postal_code'  => preg_replace('/\D/', '', $validated['pickup_zip']),
+                'pickup_state'        => $shipment->origin_state,
+                'pickup_date'         => $pickupDateCarbon->format('Y-m-d'),
+                'pickup_instructions' => $validated['pickup_instructions'] ?? null,
+            ]);
+
+            $shipment->refresh();
+            $shipment->load('selectedRate');
+
+            $result = $this->fedexService->checkPickupAvailability($shipment, $pickupDateCarbon);
+
+            if (!$result['success'] || empty($result['available'])) {
+                $msg = $result['message'] ?? 'FedEx pickup is not available for this address, date, or service.';
+                return redirect()->back()->withInput()
+                    ->withErrors(['pickup_availability' => $msg]);
+            }
+
+            $slot = $result['availability_slot'] ?? [];
+            session()->put('pickup_availability', $slot);
+
+            return redirect()->route('shipment.pickup-details', $shipment)->withInput();
+        }
+
+        /* ──────────────────────────────────────────────────────────────────
+         * PHASE 2 — Save user-chosen times and proceed to checkout
+         * ────────────────────────────────────────────────────────────────── */
+        $validated = $request->validate([
+            'pickup_ready_time'   => 'required|string',
+            'pickup_close_time'   => 'required|string',
+            'pickup_instructions' => 'nullable|string|max:500',
+        ]);
+
+        // The FedEx-confirmed pickup date was saved in Phase 1; derive ship date from it.
+        $pickupDateCarbon = \Carbon\Carbon::parse($shipment->pickup_date)->startOfDay();
+        $shipDateCarbon   = $pickupDateCarbon->copy()->addDay();
+        while ($shipDateCarbon->isWeekend()) {
+            $shipDateCarbon->addDay();
+        }
+
+        // Normalise to HH:MM:SS (the view sends "HH:MM:SS" already, but be safe).
+        $readyTime = $this->normaliseTimeString($validated['pickup_ready_time']);
+        $closeTime = $this->normaliseTimeString($validated['pickup_close_time']);
+
+        $shipment->update([
+            'pickup_ready_time'   => $readyTime,
+            'pickup_close_time'   => $closeTime,
+            'pickup_time_slot'    => null,
+            'pickup_instructions' => $validated['pickup_instructions'] ?? null,
+            'preferred_ship_date' => $shipDateCarbon->format('Y-m-d'),
+        ]);
+
+        session()->forget('pickup_availability');
+        session()->forget('shipment_pickup_ui.' . $shipment->id);
+
+        return redirect()->route('shipment.checkout', $shipment)
+            ->with('success', 'Pickup times saved. Complete payment below.');
+    }
+
+    /** Ensure a time string is always HH:MM:SS. */
+    private function normaliseTimeString(string $t): string
+    {
+        return preg_match('/^\d{2}:\d{2}$/', trim($t)) ? trim($t) . ':00' : trim($t);
+    }
+
+    /**
      * Display checkout page
      */
     public function checkout(Request $request, Shipment $shipment)
     {
-        $selectedRateId = $request->input('selected_rate');
+        $this->synchronizeShipmentSelectedRate($shipment);
 
-        if (!$selectedRateId) {
-            return redirect()->back()->withErrors(['error' => 'Please select a shipping rate']);
+        $raw = $request->input('selected_rate');
+        $selectedRateId = ($raw !== null && $raw !== '' && $raw !== false) ? (int) $raw : null;
+
+        if ($selectedRateId) {
+            $picked = $shipment->rates()->find($selectedRateId);
+
+            if (! $picked) {
+                return redirect()->route('shipment.rates', $shipment)->withErrors(['error' => 'Invalid rate selected']);
+            }
+
+            DB::transaction(function () use ($shipment, $picked) {
+                $shipment->rates()->update(['is_selected' => false]);
+                $picked->update(['is_selected' => true]);
+                $shipment->update(['selected_rate_id' => $picked->id]);
+            });
+            $shipment->refresh();
+            $this->synchronizeShipmentSelectedRate($shipment);
         }
 
-        // Mark the selected rate
-        $shipment->rates()->update(['is_selected' => false]);
-        $selectedRate = $shipment->rates()->find($selectedRateId);
+        $selectedRate = $shipment->selectedRate;
 
         if (!$selectedRate) {
-            return redirect()->back()->withErrors(['error' => 'Invalid rate selected']);
+            return redirect()->route('shipment.rates', $shipment)->withErrors(['error' => 'Please select a shipping rate to continue.']);
         }
 
-        $selectedRate->update(['is_selected' => true]);
+        if ($shipment->pickup_type === 'PICKUP' && $this->pickupDetailsIncomplete($shipment)) {
+            return redirect()->route('shipment.pickup-details', $shipment)
+                ->withErrors(['error' => 'Complete pickup address and schedule before checkout.']);
+        }
+
         $shipment->update(['status' => 'payment_pending']);
 
         return view('shipment.checkout', [
-            'shipment' => $shipment,
+            'shipment' => $shipment->fresh(['selectedRate']),
             'selectedRate' => $selectedRate,
             'states' => $this->stateService->getStates(),
         ]);
@@ -295,10 +686,17 @@ class ShipmentController extends Controller
      */
     public function processPayment(Request $request, Shipment $shipment)
     {
+        $this->synchronizeShipmentSelectedRate($shipment);
+
         $selectedRate = $shipment->selectedRate;
 
         if (!$selectedRate) {
             return redirect()->back()->withErrors(['error' => 'No rate selected']);
+        }
+
+        if ($shipment->pickup_type === 'PICKUP' && $this->pickupDetailsIncomplete($shipment)) {
+            return redirect()->route('shipment.pickup-details', $shipment)
+                ->withErrors(['error' => 'Complete pickup details and FedEx availability check before paying.']);
         }
 
         try {
@@ -618,36 +1016,42 @@ class ShipmentController extends Controller
                         $notificationService = new \App\Services\NotificationService();
                         $notificationService->sendPickupScheduled($shipment);
                     } else {
-                        // Handle different types of pickup failures
+                        $errorCode = $pickupResult['error_code'] ?? null;
+                        $recoverable = $errorCode === 'PICKUP_NOT_AVAILABLE'
+                            || (isset($pickupResult['error']) && $pickupResult['error'] === 'pickup_service_unavailable');
+
                         if (isset($pickupResult['error']) && $pickupResult['error'] === 'pickup_service_unavailable') {
-                            // Service unavailable - don't treat as critical error
                             Log::warning('FedEx pickup service unavailable - shipment created but pickup failed', [
                                 'shipment_id' => $shipment->id,
                                 'error' => $pickupResult['error'],
                                 'message' => $pickupResult['message'] ?? 'Service unavailable',
                                 'can_retry' => $pickupResult['can_retry'] ?? false
                             ]);
-
-                            // Don't change shipment status - it's still valid
-                            $shipment->status = 'label_generated'; // Keep as label generated
-                            $shipment->save();
+                        } elseif ($errorCode === 'PICKUP_NOT_AVAILABLE') {
+                            Log::warning('FedEx pickup not available after shipment creation — customer can reschedule from shipment page', [
+                                'shipment_id' => $shipment->id,
+                                'message' => $pickupResult['message'] ?? 'Pickup not available',
+                            ]);
                         } else {
-                            // Other pickup errors
                             Log::error('FedEx pickup scheduling failed after shipment creation', [
                                 'shipment_id' => $shipment->id,
                                 'error' => $pickupResult['message'] ?? 'Unknown error',
-                                'error_code' => $pickupResult['error_code'] ?? null
+                                'error_code' => $errorCode
                             ]);
                         }
 
-                        // Still mark as scheduled but with error note
-                        $shipment->pickup_scheduled = true;
-                        $shipment->pickup_confirmation = 'FAILED-' . time();
-                        // Log the error details since pickup_notes column doesn't exist
-                        Log::error('Pickup scheduling failed - error details', [
-                            'shipment_id' => $shipment->id,
-                            'error' => $pickupResult['message'] ?? 'Unknown error'
-                        ]);
+                        if ($recoverable) {
+                            $shipment->status = 'label_generated';
+                            $shipment->pickup_scheduled = false;
+                            $shipment->pickup_confirmation = null;
+                        } else {
+                            $shipment->pickup_scheduled = true;
+                            $shipment->pickup_confirmation = 'FAILED-' . time();
+                            Log::error('Pickup scheduling failed - error details', [
+                                'shipment_id' => $shipment->id,
+                                'error' => $pickupResult['message'] ?? 'Unknown error'
+                            ]);
+                        }
                         $shipment->save();
                     }
                 }
@@ -715,11 +1119,22 @@ class ShipmentController extends Controller
                 ->withErrors(['error' => 'Pickup is not available for this location or service type. ' . ($availabilityResult['message'] ?? '')]);
         }
 
+        $slot        = $availabilityResult['availability_slot'] ?? [];
+        $accessRaw  = $availabilityResult['access_time'] ?? null;
+        $accessDisplay = is_array($accessRaw)
+            ? trim(
+                ((int) ($accessRaw['hours'] ?? 0) > 0 ? (int) $accessRaw['hours'] . ' hr ' : '')
+                . ((int) ($accessRaw['minutes'] ?? 0) > 0 ? (int) $accessRaw['minutes'] . ' min' : '')
+            )
+            : (string) ($accessRaw ?? '');
+
         return view('shipment.schedule-pickup', [
-            'shipment' => $shipment,
-            'availability' => $availabilityResult,
-            'cutoff_time' => $availabilityResult['cutoff_time'],
-            'access_time' => $availabilityResult['access_time']
+            'shipment'         => $shipment,
+            'availability'     => $availabilityResult,
+            'availabilitySlot' => $slot,
+            'cutoff_time'      => $availabilityResult['cutoff_time'],
+            'access_time'      => $accessDisplay !== '' ? $accessDisplay : null,
+            'fedexPickupAddress' => $this->fedexService->resolvedPickupAddressForShipment($shipment),
         ]);
     }
 
@@ -728,19 +1143,38 @@ class ShipmentController extends Controller
      */
     public function schedulePickup(Request $request, Shipment $shipment)
     {
-        // Validate pickup details if needed
         $request->validate([
-            'confirm_pickup' => 'required|accepted',
-            'pickup_date' => 'nullable|date|after_or_equal:today',
+            'confirm_pickup'    => 'required|accepted',
+            'pickup_date'       => 'nullable|date|after_or_equal:today',
+            'pickup_ready_time' => 'required|string|regex:/^\d{2}:\d{2}(:\d{2})?$/',
+            'pickup_close_time' => 'required|string|regex:/^\d{2}:\d{2}(:\d{2})?$/',
         ]);
 
         try {
-            // If custom pickup date provided, update the shipment
-            if ($request->has('pickup_date')) {
-                $shipment->update([
-                    'preferred_ship_date' => $request->pickup_date
-                ]);
+            $ready = $this->normaliseTimeString($request->pickup_ready_time);
+            $close = $this->normaliseTimeString($request->pickup_close_time);
+
+            $updates = [
+                'pickup_ready_time' => $ready,
+                'pickup_close_time' => $close,
+                'pickup_time_slot'  => null,
+            ];
+
+            if ($request->filled('pickup_date')) {
+                $pickupDate = \Carbon\Carbon::parse($request->pickup_date)->startOfDay();
+                while ($pickupDate->isWeekend()) {
+                    $pickupDate->addDay();
+                }
+                $shipDate = $pickupDate->copy()->addDay();
+                while ($shipDate->isWeekend()) {
+                    $shipDate->addDay();
+                }
+                $updates['pickup_date']         = $pickupDate->format('Y-m-d');
+                $updates['preferred_ship_date'] = $shipDate->format('Y-m-d');
             }
+
+            $shipment->update($updates);
+            $shipment->refresh();
 
             Log::info('Scheduling FedEx pickup from controller', [
                 'shipment_id' => $shipment->id,
@@ -1093,5 +1527,92 @@ class ShipmentController extends Controller
     public function paymentCancel()
     {
         return view('shipment.cancel');
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function createFormDefaultsFromShipment(Shipment $shipment): array
+    {
+        return [
+            'sender_full_name' => $shipment->sender_full_name,
+            'sender_email' => $shipment->sender_email,
+            'sender_phone' => $shipment->sender_phone,
+            'sender_address_line' => $shipment->sender_address_line,
+            'sender_city' => $shipment->sender_city,
+            'sender_zipcode' => $shipment->sender_zipcode,
+            'recipient_name' => $shipment->recipient_name,
+            'recipient_phone' => $shipment->recipient_phone,
+            'recipient_address' => $shipment->recipient_address,
+            'recipient_city' => $shipment->recipient_city,
+            'recipient_zip' => $shipment->recipient_postal_code,
+            'bag_type' => $shipment->bag_type,
+            'number_of_bags' => $shipment->number_of_bags,
+            'declared_value' => $shipment->declared_value,
+            'package_description' => $shipment->package_description,
+            'package_weight' => $shipment->package_weight,
+            'package_length' => $shipment->package_length,
+            'package_width' => $shipment->package_width,
+            'package_height' => $shipment->package_height,
+            'service_type' => $shipment->service_type,
+            'pickup_type' => $shipment->pickup_type ?? 'DROPOFF',
+            'delivery_method' => $shipment->delivery_method ?? 'dropoff',
+        ];
+    }
+
+    private function rememberShipmentCreateStates(Shipment $shipment): void
+    {
+        if ($shipment->origin_state && $shipment->destination_state) {
+            session()->put('shipment_create_context', [
+                'origin_state' => $shipment->origin_state,
+                'destination_state' => $shipment->destination_state,
+            ]);
+        }
+    }
+
+    private function defaultPreferredShipDateForQuote(): string
+    {
+        $d = \Carbon\Carbon::today();
+        while ($d->isWeekend()) {
+            $d->addDay();
+        }
+
+        return $d->format('Y-m-d');
+    }
+
+    private function applyPickupPreference(Shipment $shipment, string $pickupType): void
+    {
+        $deliveryMethod = $pickupType === 'PICKUP' ? 'pickup' : 'dropoff';
+
+        $updates = [
+            'pickup_type' => $pickupType,
+            'delivery_method' => $deliveryMethod,
+        ];
+
+        if ($pickupType === 'DROPOFF') {
+            $updates = array_merge($updates, [
+                'pickup_address' => null,
+                'pickup_city' => null,
+                'pickup_postal_code' => null,
+                'pickup_date' => null,
+                'pickup_time_slot' => null,
+                'pickup_instructions' => null,
+                'pickup_ready_time' => null,
+                'pickup_close_time' => null,
+            ]);
+            session()->forget('pickup_availability');
+        }
+
+        $shipment->update($updates);
+    }
+
+    private function pickupDetailsIncomplete(Shipment $shipment): bool
+    {
+        return empty(trim((string) $shipment->pickup_address))
+            || empty(trim((string) $shipment->pickup_city))
+            || empty(trim((string) $shipment->pickup_postal_code))
+            || empty($shipment->pickup_date)
+            || empty(trim((string) $shipment->pickup_ready_time))
+            || empty(trim((string) $shipment->pickup_close_time));
     }
 }

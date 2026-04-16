@@ -5,8 +5,24 @@
 @section('content')
 <div class="py-12 bg-gray-50">
     <div class="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
+        @if (session('success'))
+            <div class="mb-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800" role="status">
+                {{ session('success') }}
+            </div>
+        @endif
+
+        <div class="mb-6 overflow-hidden rounded-xl border-2 border-indigo-600 bg-indigo-600 shadow-lg">
+            <div class="bg-indigo-50 px-5 py-4 sm:px-6 sm:py-5">
+                <p class="text-xs font-semibold uppercase tracking-wide text-indigo-700">FedEx Pickup Request API</p>
+                <h1 class="mt-1 text-2xl font-bold text-gray-900">Schedule your pickup</h1>
+                <p class="mt-2 text-sm text-gray-700">
+                    Availability for your address and service was checked with FedEx. Choose your date and time window below; the request we send uses FedEx cutoff and <strong>access time</strong> rules from that response.
+                </p>
+            </div>
+        </div>
+
         <div class="bg-white rounded-lg shadow-md p-6">
-            <h1 class="text-2xl font-bold mb-6">Schedule FedEx Pickup</h1>
+            <h2 class="text-lg font-semibold text-gray-800 mb-6">Confirm details</h2>
 
             @if ($errors->any())
                 <div class="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 mb-6" role="alert">
@@ -42,25 +58,63 @@
             </div>
 
             <div class="mb-6 p-4 bg-green-50 rounded-md">
-                <h2 class="text-lg font-semibold mb-2">Pickup Address</h2>
+                <h2 class="text-lg font-semibold mb-2">Pickup Address (sent to FedEx)</h2>
                 <div class="text-sm text-gray-700">
-                    <p>{{ $shipment->pickup_address }}</p>
-                    <p>{{ $shipment->pickup_city }}, {{ $shipment->pickup_state }} {{ $shipment->pickup_postal_code }}</p>
+                    <p>{{ $fedexPickupAddress['streetLines'][0] ?? '' }}</p>
+                    <p>{{ $fedexPickupAddress['city'] ?? '' }}, {{ $fedexPickupAddress['stateOrProvinceCode'] ?? '' }} {{ $fedexPickupAddress['postalCode'] ?? '' }}</p>
                 </div>
             </div>
 
+            @php
+                $slot = $availabilitySlot ?? [];
+                $readyOpts = $slot['readyTimeOptions'] ?? [];
+                $latestOpts = $slot['latestTimeOptions'] ?? [];
+                $defaultReady = $slot['defaultReadyTime'] ?? '15:00:00';
+                $defaultLatest = $slot['defaultLatestTimeOptions'] ?? '18:00:00';
+                $pickedDate = $slot['pickupDate'] ?? ($availability['dispatch_date_used'] ?? $shipment->pickup_date?->format('Y-m-d'));
+                $fmtClock = function (?string $t) {
+                    if (!$t) return '—';
+                    $t = strlen(trim($t)) === 5 ? trim($t).':00' : trim($t);
+                    try {
+                        return \Carbon\Carbon::createFromFormat('H:i:s', $t)->format('g:i A');
+                    } catch (\Throwable) {
+                        return $t;
+                    }
+                };
+            @endphp
+
             @if(isset($availability) && $availability['available'])
-                <div class="mb-6 p-4 bg-indigo-50 rounded-md">
-                    <h2 class="text-lg font-semibold mb-2">Pickup Availability</h2>
-                    <div class="text-sm text-indigo-700">
-                        <p><strong>Pickup is available for this location!</strong></p>
-                        @if(isset($cutoff_time))
-                            <p>Cutoff Time: {{ $cutoff_time }}</p>
-                        @endif
-                        @if(isset($access_time))
-                            <p>Access Time: {{ $access_time }}</p>
-                        @endif
-                        <p class="mt-2">FedEx will pick up your package between 9:00 AM and 5:00 PM on the selected date.</p>
+                <div class="mb-6 rounded-lg border-2 border-green-500 bg-green-50 p-5 shadow-sm">
+                    <div class="flex items-start gap-3">
+                        <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-green-500 text-white">
+                            <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                            </svg>
+                        </span>
+                        <div class="min-w-0 flex-1">
+                            <h2 class="text-lg font-bold text-green-900">FedEx: pickup available</h2>
+                            <p class="mt-1 text-sm text-green-800">Use the time options FedEx returned for your address and service.</p>
+                            <dl class="mt-3 grid gap-2 text-sm text-green-900 sm:grid-cols-2">
+                                @if(!empty($cutoff_time))
+                                    <div class="rounded bg-white/60 px-3 py-2">
+                                        <dt class="text-xs font-medium uppercase text-green-700">Cutoff</dt>
+                                        <dd class="font-semibold">{{ $fmtClock($cutoff_time) }}</dd>
+                                    </div>
+                                @endif
+                                @if(!empty($access_time))
+                                    <div class="rounded bg-white/60 px-3 py-2">
+                                        <dt class="text-xs font-medium uppercase text-green-700">Access time</dt>
+                                        <dd class="font-semibold">{{ $access_time }}</dd>
+                                    </div>
+                                @endif
+                                @if($pickedDate)
+                                    <div class="rounded bg-white/60 px-3 py-2 sm:col-span-2">
+                                        <dt class="text-xs font-medium uppercase text-green-700">FedEx pickup date</dt>
+                                        <dd class="font-semibold">{{ \Carbon\Carbon::parse($pickedDate)->format('l, M j, Y') }}</dd>
+                                    </div>
+                                @endif
+                            </dl>
+                        </div>
                     </div>
                 </div>
             @endif
@@ -68,27 +122,39 @@
             <form action="{{ route('shipment.pickup.schedule', $shipment) }}" method="POST" class="mt-6">
                 @csrf
                 <div class="mb-6">
-                    <label for="pickup_date" class="block text-sm font-medium text-gray-700 mb-1">Pickup Date</label>
+                    <label for="pickup_date" class="block text-sm font-medium text-gray-700 mb-1">Pickup date</label>
                     <input type="date" name="pickup_date" id="pickup_date"
-                        value="{{ $shipment->preferred_ship_date->format('Y-m-d') }}"
+                        value="{{ old('pickup_date', $pickedDate ?? $shipment->pickup_date?->format('Y-m-d') ?? $shipment->preferred_ship_date->format('Y-m-d')) }}"
                         min="{{ now()->format('Y-m-d') }}"
                         class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500">
+                    <p class="text-xs text-gray-500 mt-1">Changing the date may require a new availability check; FedEx will validate on submit.</p>
                 </div>
 
-                <div class="mb-6">
-                    <label for="pickup_time_slot" class="block text-sm font-medium text-gray-700 mb-1">Preferred Pickup Time</label>
-                    <select
-                        id="pickup_time_slot"
-                        name="pickup_time_slot"
-                        class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-                        required
-                    >
-                        <option value="">Select Time Slot</option>
-                        <option value="morning" {{ old('pickup_time_slot', $shipment->pickup_time_slot) == 'morning' ? 'selected' : '' }}>Morning (8 AM - 12 PM)</option>
-                        <option value="afternoon" {{ old('pickup_time_slot', $shipment->pickup_time_slot) == 'afternoon' ? 'selected' : '' }}>Afternoon (12 PM - 4 PM)</option>
-                        <option value="evening" {{ old('pickup_time_slot', $shipment->pickup_time_slot) == 'evening' ? 'selected' : '' }}>Evening (4 PM - 7 PM)</option>
-                    </select>
-                    <p class="text-sm text-gray-500 mt-1">FedEx will pick up your package during the selected time window.</p>
+                <div class="grid grid-cols-1 gap-6 md:grid-cols-2 mb-6">
+                    <div>
+                        <label for="pickup_ready_time" class="block text-sm font-medium text-gray-700 mb-1">Package ready time *</label>
+                        <select id="pickup_ready_time" name="pickup_ready_time" required
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500">
+                            @foreach($readyOpts as $t)
+                                <option value="{{ $t }}" @selected(old('pickup_ready_time', $shipment->pickup_ready_time ?? $defaultReady) == $t)>{{ $fmtClock($t) }}</option>
+                            @endforeach
+                            @if(empty($readyOpts))
+                                <option value="{{ $defaultReady }}" selected>{{ $fmtClock($defaultReady) }}</option>
+                            @endif
+                        </select>
+                    </div>
+                    <div>
+                        <label for="pickup_close_time" class="block text-sm font-medium text-gray-700 mb-1">Latest pickup time *</label>
+                        <select id="pickup_close_time" name="pickup_close_time" required
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500">
+                            @foreach($latestOpts as $t)
+                                <option value="{{ $t }}" @selected(old('pickup_close_time', $shipment->pickup_close_time ?? $defaultLatest) == $t)>{{ $fmtClock($t) }}</option>
+                            @endforeach
+                            @if(empty($latestOpts))
+                                <option value="{{ $defaultLatest }}" selected>{{ $fmtClock($defaultLatest) }}</option>
+                            @endif
+                        </select>
+                    </div>
                 </div>
 
                 <div class="mb-4">
@@ -153,12 +219,6 @@
                 const minDateValue = getMinPickupDate();
                 
                 if (selectedValue < minDateValue) {
-                    const now = new Date();
-                    if (now.getHours() >= 15) {
-                        alert('It is past 3 PM cutoff time. Pickup must be scheduled for tomorrow or later.');
-                    } else {
-                        alert('Pickup date cannot be in the past.');
-                    }
                     this.value = minDateValue;
                 }
             });
@@ -172,7 +232,6 @@
                     
                     if (selectedValue < minDateValue) {
                         e.preventDefault();
-                        alert('Invalid pickup date. Please select a valid date.');
                         pickupDateInput.value = minDateValue;
                         pickupDateInput.focus();
                         return false;

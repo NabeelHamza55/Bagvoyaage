@@ -4,7 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Shipment extends Model
 {
@@ -54,10 +54,12 @@ class Shipment extends Model
         'pickup_confirmation',
         'fedex_response',
         'status',
+        'selected_rate_id',
     ];
 
     protected $casts = [
         'preferred_ship_date' => 'date',
+        'pickup_date' => 'date',
         'pickup_scheduled' => 'boolean',
         'fedex_response' => 'array',
     ];
@@ -68,9 +70,9 @@ class Shipment extends Model
         return $this->hasMany(ShipmentRate::class);
     }
 
-    public function selectedRate(): HasOne
+    public function selectedRate(): BelongsTo
     {
-        return $this->hasOne(ShipmentRate::class)->where('is_selected', true);
+        return $this->belongsTo(ShipmentRate::class, 'selected_rate_id');
     }
 
     public function paymentTransactions(): HasMany

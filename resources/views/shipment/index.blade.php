@@ -3,6 +3,7 @@
 @section('title', 'BagVoyage - Domestic Shipping Made Easy')
 
 @section('content')
+<style>[x-cloak]{display:none!important}</style>
 <!-- Hero Section -->
 <section class="relative bg-primary-600 overflow-hidden">
     <div class="absolute inset-0">
@@ -52,80 +53,152 @@
             </h2>
             <p class="text-lg text-gray-600 max-w-2xl mx-auto">
                 Select your origin and destination states to begin your domestic shipping journey.
-                We only show states where FedEx service is available.
+                We only show states where FedEx service is available. Use the search box inside each menu to filter by name or code.
             </p>
         </div>
 
         <div class="card animate-slide-up">
             <div class="card-body p-8">
-                <form method="GET" action="{{ route('shipment.form') }}" x-data="{ loading: false }" @submit="loading = true">
+                <form
+                    method="GET"
+                    action="{{ route('shipment.form') }}"
+                    x-data="{
+                        loading: false,
+                        formError: '',
+                        states: {{ \Illuminate\Support\Js::from($stateOptions) }},
+                        originCode: {{ \Illuminate\Support\Js::from(old('origin_state', '')) }},
+                        destCode: {{ \Illuminate\Support\Js::from(old('destination_state', '')) }},
+                        originSearch: '',
+                        destSearch: '',
+                        originOpen: false,
+                        destOpen: false,
+                        filterStates(q) {
+                            const needle = (q || '').toLowerCase().trim();
+                            if (!needle) return this.states;
+                            return this.states.filter(s =>
+                                s.name.toLowerCase().includes(needle) || s.code.toLowerCase().includes(needle)
+                            );
+                        },
+                        selectOrigin(s) {
+                            this.formError = '';
+                            this.originCode = s.code;
+                            this.originSearch = '';
+                            this.originOpen = false;
+                        },
+                        selectDest(s) {
+                            this.formError = '';
+                            this.destCode = s.code;
+                            this.destSearch = '';
+                            this.destOpen = false;
+                        },
+                        labelFor(code) {
+                            const s = this.states.find(x => x.code === code);
+                            return s ? s.name + ' (' + s.code + ')' : '';
+                        },
+                    }"
+                    @submit="formError = ''; if (!originCode || !destCode) { $event.preventDefault(); formError = 'Please select both origin and destination states.'; } else { loading = true }"
+                    @keydown.escape.window="originOpen = false; destOpen = false"
+                >
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
-                        <!-- Origin State -->
-                        <div class="space-y-2">
-                            <label for="origin_state" class="block text-sm font-semibold text-gray-700">
+                        <!-- Origin: button opens panel (mousedown on options avoids blur race) -->
+                        <div class="relative space-y-2" @click.outside="originOpen = false">
+                            <label class="block text-sm font-semibold text-gray-700">
                                 <svg class="w-4 h-4 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path>
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path>
                                 </svg>
                                 Origin State
                             </label>
-                            <select
-                                id="origin_state"
-                                name="origin_state"
-                                class="form-select @error('origin_state') border-red-500 @enderror"
-                                required
+                            <input type="hidden" name="origin_state" x-bind:value="originCode">
+                            <button
+                                type="button"
+                                class="form-input flex w-full items-center justify-between text-left @error('origin_state') border-red-500 @enderror"
+                                @click="originOpen = !originOpen; destOpen = false;"
+                                :aria-expanded="originOpen"
                             >
-                                <option value="">Select Origin State</option>
-                                @foreach($states as $code => $name)
-                                    <option value="{{ $code }}" {{ old('origin_state') == $code ? 'selected' : '' }}>
-                                        {{ $name }}
-                                    </option>
-                                @endforeach
-                            </select>
+                                <span x-text="labelFor(originCode) || 'Choose origin…'" class="truncate text-gray-800"></span>
+                                <svg class="ml-2 h-5 w-5 shrink-0 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                            </button>
+                            <div
+                                x-show="originOpen"
+                                x-transition
+                                x-cloak
+                                class="absolute z-40 mt-1 w-full rounded-lg border border-gray-200 bg-white p-2 shadow-xl"
+                            >
+                                <input
+                                    type="search"
+                                    class="form-input mb-2 w-full text-sm"
+                                    placeholder="Search name or code…"
+                                    x-model="originSearch"
+                                >
+                                <div class="max-h-56 overflow-y-auto rounded-md border border-gray-100">
+                                    <p class="px-3 py-2 text-sm text-gray-500" x-show="filterStates(originSearch).length === 0">No matching states.</p>
+                                    <template x-for="s in filterStates(originSearch)" :key="s.code">
+                                        <button
+                                            type="button"
+                                            class="w-full px-3 py-2 text-left text-sm hover:bg-primary-50"
+                                            x-text="s.name + ' (' + s.code + ')'"
+                                            @mousedown.prevent="selectOrigin(s)"
+                                        ></button>
+                                    </template>
+                                </div>
+                            </div>
                             @error('origin_state')
-                                <p class="text-red-500 text-sm mt-1 flex items-center">
-                                    <svg class="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
-                                        <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path>
-                                    </svg>
-                                    {{ $message }}
-                                </p>
+                                <p class="text-red-500 text-sm mt-1">{{ $message }}</p>
                             @enderror
                         </div>
 
-                        <!-- Destination State -->
-                        <div class="space-y-2">
-                            <label for="destination_state" class="block text-sm font-semibold text-gray-700">
+                        <!-- Destination -->
+                        <div class="relative space-y-2" @click.outside="destOpen = false">
+                            <label class="block text-sm font-semibold text-gray-700">
                                 <svg class="w-4 h-4 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path>
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path>
                                 </svg>
                                 Destination State
                             </label>
-                            <select
-                                id="destination_state"
-                                name="destination_state"
-                                class="form-select @error('destination_state') border-red-500 @enderror"
-                                required
+                            <input type="hidden" name="destination_state" x-bind:value="destCode">
+                            <button
+                                type="button"
+                                class="form-input flex w-full items-center justify-between text-left @error('destination_state') border-red-500 @enderror"
+                                @click="destOpen = !destOpen; originOpen = false;"
+                                :aria-expanded="destOpen"
                             >
-                                <option value="">Select Destination State</option>
-                                @foreach($states as $code => $name)
-                                    <option value="{{ $code }}" {{ old('destination_state') == $code ? 'selected' : '' }}>
-                                        {{ $name }}
-                                    </option>
-                                @endforeach
-                            </select>
+                                <span x-text="labelFor(destCode) || 'Choose destination…'" class="truncate text-gray-800"></span>
+                                <svg class="ml-2 h-5 w-5 shrink-0 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                            </button>
+                            <div
+                                x-show="destOpen"
+                                x-transition
+                                x-cloak
+                                class="absolute z-40 mt-1 w-full rounded-lg border border-gray-200 bg-white p-2 shadow-xl"
+                            >
+                                <input
+                                    type="search"
+                                    class="form-input mb-2 w-full text-sm"
+                                    placeholder="Search name or code…"
+                                    x-model="destSearch"
+                                >
+                                <div class="max-h-56 overflow-y-auto rounded-md border border-gray-100">
+                                    <p class="px-3 py-2 text-sm text-gray-500" x-show="filterStates(destSearch).length === 0">No matching states.</p>
+                                    <template x-for="s in filterStates(destSearch)" :key="s.code">
+                                        <button
+                                            type="button"
+                                            class="w-full px-3 py-2 text-left text-sm hover:bg-primary-50"
+                                            x-text="s.name + ' (' + s.code + ')'"
+                                            @mousedown.prevent="selectDest(s)"
+                                        ></button>
+                                    </template>
+                                </div>
+                            </div>
                             @error('destination_state')
-                                <p class="text-red-500 text-sm mt-1 flex items-center">
-                                    <svg class="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
-                                        <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path>
-                                    </svg>
-                                    {{ $message }}
-                                </p>
+                                <p class="text-red-500 text-sm mt-1">{{ $message }}</p>
                             @enderror
                         </div>
                     </div>
 
-                    <!-- Submit Button -->
+                    <p x-show="formError" x-cloak class="mt-6 text-center text-sm text-red-600" x-text="formError"></p>
+
                     <div class="mt-8 text-center">
                         <button
                             type="submit"
@@ -144,6 +217,61 @@
                         </button>
                     </div>
                 </form>
+            </div>
+        </div>
+
+        {{-- BagVoyage services (customer-facing, not integration details) --}}
+        <div class="mt-12 rounded-2xl border border-gray-100 bg-gradient-to-b from-white to-gray-50 p-8 lg:p-10 shadow-sm">
+            <div class="text-center max-w-3xl mx-auto mb-10">
+                <h3 class="text-2xl font-bold text-gray-900">What you get with BagVoyage</h3>
+                <p class="mt-3 text-gray-600">
+                    Simple domestic shipping in a few steps: tell us where it’s going, compare options, pay securely, and get your label.
+                    We focus on clarity and speed—not technical jargon.
+                </p>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div class="rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
+                    <div class="text-primary-600 mb-3">
+                        <svg class="h-8 w-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
+                    </div>
+                    <h4 class="text-lg font-semibold text-gray-900">Instant quotes</h4>
+                    <p class="mt-2 text-sm text-gray-600 leading-relaxed">See real shipping prices for your package before you commit. Pick the speed and price that fit your timeline.</p>
+                </div>
+                <div class="rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
+                    <div class="text-primary-600 mb-3">
+                        <svg class="h-8 w-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
+                    </div>
+                    <h4 class="text-lg font-semibold text-gray-900">Pickup or drop-off</h4>
+                    <p class="mt-2 text-sm text-gray-600 leading-relaxed">Choose whether a courier collects from you or you drop off with your label. We walk you through the details at checkout when pickup applies.</p>
+                </div>
+                <div class="rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
+                    <div class="text-primary-600 mb-3">
+                        <svg class="h-8 w-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+                    </div>
+                    <h4 class="text-lg font-semibold text-gray-900">Secure checkout</h4>
+                    <p class="mt-2 text-sm text-gray-600 leading-relaxed">Pay with PayPal. After payment, your label and tracking flow are ready so you can ship with confidence.</p>
+                </div>
+                <div class="rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
+                    <div class="text-primary-600 mb-3">
+                        <svg class="h-8 w-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+                    </div>
+                    <h4 class="text-lg font-semibold text-gray-900">Trusted carrier network</h4>
+                    <p class="mt-2 text-sm text-gray-600 leading-relaxed">Your shipment moves on a major U.S. carrier network you already know—reliable delivery nationwide.</p>
+                </div>
+                <div class="rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
+                    <div class="text-primary-600 mb-3">
+                        <svg class="h-8 w-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                    </div>
+                    <h4 class="text-lg font-semibold text-gray-900">Stay in the loop</h4>
+                    <p class="mt-2 text-sm text-gray-600 leading-relaxed">Track your package and revisit your shipment summary anytime from your confirmation.</p>
+                </div>
+                <div class="rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
+                    <div class="text-primary-600 mb-3">
+                        <svg class="h-8 w-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 5.636l-3.536 3.536m0 5.656l3.536 3.536M9.172 9.172L5.636 5.636m3.536 9.192l-3.536 3.536M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-5 0a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
+                    </div>
+                    <h4 class="text-lg font-semibold text-gray-900">We’re here to help</h4>
+                    <p class="mt-2 text-sm text-gray-600 leading-relaxed">Questions about timing, packaging, or your order? Reach out through Support—we’re building BagVoyage around shippers like you.</p>
+                </div>
             </div>
         </div>
     </div>

@@ -3,6 +3,9 @@
 @section('title', 'Shipment Details - BagVoyage')
 
 @section('content')
+@php
+    $f = $formDefaults ?? [];
+@endphp
 <div class="py-12 bg-gray-50">
     <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
         <!-- Header -->
@@ -45,6 +48,9 @@
                 @csrf
                 <input type="hidden" name="origin_state" value="{{ $origin_state }}">
                 <input type="hidden" name="destination_state" value="{{ $destination_state }}">
+                @if(!empty($resumeShipmentId))
+                    <input type="hidden" name="resume_shipment_id" value="{{ $resumeShipmentId }}">
+                @endif
 
                 <!-- Sender Information -->
                 <div class="mb-10">
@@ -58,7 +64,7 @@
                                 type="text"
                                 id="sender_full_name"
                                 name="sender_full_name"
-                                value="{{ old('sender_full_name') }}"
+                                value="{{ old('sender_full_name', $f['sender_full_name'] ?? '') }}"
                                 class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 @error('sender_full_name') border-red-500 @enderror"
                                 required
                             >
@@ -75,7 +81,7 @@
                                 type="email"
                                 id="sender_email"
                                 name="sender_email"
-                                value="{{ old('sender_email') }}"
+                                value="{{ old('sender_email', $f['sender_email'] ?? '') }}"
                                 class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 @error('sender_email') border-red-500 @enderror"
                                 required
                             >
@@ -92,7 +98,7 @@
                                 type="tel"
                                 id="sender_phone"
                                 name="sender_phone"
-                                value="{{ old('sender_phone') }}"
+                                value="{{ old('sender_phone', $f['sender_phone'] ?? '') }}"
                                 placeholder="+1-555-123-4567"
                                 class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 @error('sender_phone') border-red-500 @enderror"
                                 required
@@ -111,7 +117,7 @@
                                 type="text"
                                 id="sender_address_line"
                                 name="sender_address_line"
-                                value="{{ old('sender_address_line') }}"
+                                value="{{ old('sender_address_line', $f['sender_address_line'] ?? '') }}"
                                 placeholder="123 Main St"
                                 class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 @error('sender_address_line') border-red-500 @enderror"
                                 required
@@ -129,7 +135,7 @@
                                 type="text"
                                 id="sender_city"
                                 name="sender_city"
-                                value="{{ old('sender_city') }}"
+                                value="{{ old('sender_city', $f['sender_city'] ?? '') }}"
                                 placeholder="Los Angeles"
                                 class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 @error('sender_city') border-red-500 @enderror"
                                 required
@@ -147,7 +153,7 @@
                                 type="text"
                                 id="sender_zipcode"
                                 name="sender_zipcode"
-                                value="{{ old('sender_zipcode') }}"
+                                value="{{ old('sender_zipcode', $f['sender_zipcode'] ?? '') }}"
                                 placeholder="90001"
                                 class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 @error('sender_zipcode') border-red-500 @enderror"
                                 required
@@ -159,175 +165,14 @@
                     </div>
                 </div>
 
-                <!-- Pickup or Drop-off -->
-                <div class="mb-10">
-                    <h2 class="text-xl font-semibold text-gray-900 mb-6 border-b pb-2">Pickup or Drop-off</h2>
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-                        <div>
-                            <label class="flex items-center p-4 border border-gray-300 rounded-lg cursor-pointer hover:bg-gray-50">
-                                <input
-                                    type="radio"
-                                    name="pickup_type"
-                                    value="PICKUP"
-                                    class="mr-3 text-indigo-600"
-                                    {{ old('pickup_type') == 'PICKUP' ? 'checked' : '' }}
-                                    onchange="togglePickupFields()"
-                                >
-                                <div>
-                                    <div class="font-medium text-gray-900">Pickup</div>
-                                    <div class="text-sm text-gray-500">We'll pick up from your location</div>
-                                </div>
-                            </label>
-                        </div>
-                        <div>
-                            <label class="flex items-center p-4 border border-gray-300 rounded-lg cursor-pointer hover:bg-gray-50">
-                                <input
-                                    type="radio"
-                                    name="pickup_type"
-                                    value="DROPOFF"
-                                    class="mr-3 text-indigo-600"
-                                    {{ old('pickup_type') == 'DROPOFF' ? 'checked' : '' }}
-                                    onchange="togglePickupFields()"
-                                >
-                                <div>
-                                    <div class="font-medium text-gray-900">Drop-off</div>
-                                    <div class="text-sm text-gray-500">You'll drop off at FedEx location</div>
-                                </div>
-                            </label>
-                        </div>
-                    </div>
-                    @error('pickup_type')
-                        <p class="text-red-500 text-sm mt-1">{{ $message }}</p>
-                    @enderror
-
-                    <!-- Hidden field for backward compatibility -->
-                    <input type="hidden" name="delivery_method" id="delivery_method_hidden" value="{{ old('delivery_method', 'dropoff') }}">
-
-                    <!-- Hidden fields for FedX API requirements -->
-                    <input type="hidden" name="weight_unit" value="LB">
-                    <input type="hidden" name="dimension_unit" value="IN">
-                    <input type="hidden" name="currency_code" value="USD">
-                    <input type="hidden" name="packaging_type" value="YOUR_PACKAGING">
-                    <input type="hidden" name="sender_state" value="{{ $origin_state }}">
-
-                    <!-- Pickup Address (conditional) -->
-                    <div id="pickup-address-section" class="hidden">
-                        <h3 class="text-lg font-medium text-gray-900 mb-4">Pickup Address</h3>
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <div class="md:col-span-2">
-                                <label for="pickup_address" class="block text-sm font-medium text-gray-700 mb-2">
-                                    Street Address
-                                </label>
-                                <textarea
-                                    id="pickup_address"
-                                    name="pickup_address"
-                                    rows="3"
-                                    class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                                >{{ old('pickup_address') }}</textarea>
-                            </div>
-                            <div>
-                                <label for="pickup_city" class="block text-sm font-medium text-gray-700 mb-2">
-                                    City
-                                </label>
-                                <select
-                                    id="pickup_city"
-                                    name="pickup_city"
-                                    class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                                    required
-                                    onchange="toggleCustomCity('pickup_city', 'pickup_city_custom')"
-                                >
-                                    <option value="">Select City</option>
-                                </select>
-                                <input
-                                    type="text"
-                                    id="pickup_city_custom"
-                                    name="pickup_city_custom"
-                                    placeholder="Enter custom city name"
-                                    class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 mt-2 hidden"
-                                >
-                            </div>
-                            <div>
-                                <label for="pickup_zip" class="block text-sm font-medium text-gray-700 mb-2">
-                                    ZIP Code *
-                                </label>
-                                <input
-                                    type="text"
-                                    id="pickup_zip"
-                                    name="pickup_zip"
-                                    value="{{ old('pickup_zip') }}"
-                                    placeholder="e.g., 10001"
-                                    data-state-code="{{ $origin_state }}"
-                                    class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 @error('pickup_zip') border-red-500 @enderror"
-                                    required
-                                >
-
-                                @error('pickup_zip')
-                                    <p class="text-red-500 text-sm mt-1">{{ $message }}</p>
-                                @enderror
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Pickup Scheduling (conditional - only if pickup is selected) -->
-                    <div id="pickup-scheduling-section" class="hidden mt-8">
-                        <h3 class="text-lg font-medium text-gray-900 mb-4">Pickup Scheduling</h3>
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <div>
-                                <label for="pickup_date" class="block text-sm font-medium text-gray-700 mb-2">
-                                    Pickup Date *
-                                </label>
-                                <input
-                                    type="date"
-                                    id="pickup_date"
-                                    name="pickup_date"
-                                    value="{{ old('pickup_date') }}"
-                                    min="{{ date('H') >= 15 ? date('Y-m-d', strtotime('+1 day')) : date('Y-m-d') }}"
-                                    class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                                >
-                                @error('pickup_date')
-                                    <p class="text-red-500 text-sm mt-1">{{ $message }}</p>
-                                @enderror
-                            </div>
-
-                            <div>
-                                <label for="pickup_time_slot" class="block text-sm font-medium text-gray-700 mb-2">
-                                    Preferred Pickup Time *
-                                </label>
-                                <select
-                                    id="pickup_time_slot"
-                                    name="pickup_time_slot"
-                                    class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                                    required
-                                >
-                                    <option value="">Select Time Slot</option>
-                                    <option value="morning" {{ old('pickup_time_slot') == 'morning' ? 'selected' : '' }}>Morning (8 AM - 12 PM)</option>
-                                    <option value="afternoon" {{ old('pickup_time_slot') == 'afternoon' ? 'selected' : '' }}>Afternoon (12 PM - 4 PM)</option>
-                                    <option value="evening" {{ old('pickup_time_slot') == 'evening' ? 'selected' : '' }}>Evening (4 PM - 7 PM)</option>
-                                </select>
-                                @error('pickup_time_slot')
-                                    <p class="text-red-500 text-sm mt-1">{{ $message }}</p>
-                                @enderror
-                                <p class="text-sm text-gray-500 mt-1">FedEx will pick up your package during the selected time window.</p>
-                            </div>
-
-                            <div class="md:col-span-2">
-                                <label for="pickup_instructions" class="block text-sm font-medium text-gray-700 mb-2">
-                                    Special Instructions (Optional)
-                                </label>
-                                <textarea
-                                    id="pickup_instructions"
-                                    name="pickup_instructions"
-                                    rows="3"
-                                    placeholder="Ring bell at side entrance"
-                                    class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                                >{{ old('pickup_instructions') }}</textarea>
-                                @error('pickup_instructions')
-                                    <p class="text-red-500 text-sm mt-1">{{ $message }}</p>
-                                @enderror
-                            </div>
-                        </div>
-                    </div>
-                </div>
+                {{-- Pickup vs drop-off is chosen on the rates page (after pricing), not here. --}}
+                <input type="hidden" name="pickup_type" value="{{ old('pickup_type', $f['pickup_type'] ?? 'DROPOFF') }}">
+                <input type="hidden" name="delivery_method" value="{{ old('delivery_method', $f['delivery_method'] ?? 'dropoff') }}">
+                <input type="hidden" name="weight_unit" value="LB">
+                <input type="hidden" name="dimension_unit" value="IN">
+                <input type="hidden" name="currency_code" value="USD">
+                <input type="hidden" name="packaging_type" value="YOUR_PACKAGING">
+                <input type="hidden" name="sender_state" value="{{ $origin_state }}">
 
                 <!-- Recipient Information -->
                 <div class="mb-10">
@@ -341,7 +186,7 @@
                                 type="text"
                                 id="recipient_name"
                                 name="recipient_name"
-                                value="{{ old('recipient_name') }}"
+                                value="{{ old('recipient_name', $f['recipient_name'] ?? '') }}"
                                 class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 @error('recipient_name') border-red-500 @enderror"
                                 required
                             >
@@ -358,7 +203,7 @@
                                 type="tel"
                                 id="recipient_phone"
                                 name="recipient_phone"
-                                value="{{ old('recipient_phone') }}"
+                                value="{{ old('recipient_phone', $f['recipient_phone'] ?? '') }}"
                                 class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 @error('recipient_phone') border-red-500 @enderror"
                                 required
                             >
@@ -377,7 +222,7 @@
                                 rows="3"
                                 class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 @error('recipient_address') border-red-500 @enderror"
                                 required
-                            >{{ old('recipient_address') }}</textarea>
+                            >{{ old('recipient_address', $f['recipient_address'] ?? '') }}</textarea>
                             @error('recipient_address')
                                 <p class="text-red-500 text-sm mt-1">{{ $message }}</p>
                             @enderror
@@ -402,6 +247,7 @@
                                 name="recipient_city_custom"
                                 placeholder="Enter custom city name"
                                 class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 mt-2 hidden @error('recipient_city') border-red-500 @enderror"
+                                value="{{ old('recipient_city_custom', $f['recipient_city_custom'] ?? '') }}"
                             >
                             @error('recipient_city')
                                 <p class="text-red-500 text-sm mt-1">{{ $message }}</p>
@@ -416,7 +262,7 @@
                                 type="text"
                                 id="recipient_zip"
                                 name="recipient_zip"
-                                value="{{ old('recipient_zip') }}"
+                                value="{{ old('recipient_zip', $f['recipient_zip'] ?? '') }}"
                                 placeholder="e.g., 90210"
                                 data-state-code="{{ $destination_state }}"
                                 class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 @error('recipient_zip') border-red-500 @enderror"
@@ -446,9 +292,9 @@
                                 required
                             >
                                 <option value="">Select Bag Type</option>
-                                <option value="small" {{ old('bag_type') == 'small' ? 'selected' : '' }}>Small Bag (18" x 14" x 4", 25 lbs)</option>
-                                <option value="medium" {{ old('bag_type') == 'medium' ? 'selected' : '' }}>Medium Bag (24" x 16" x 6", 40 lbs)</option>
-                                <option value="large" {{ old('bag_type') == 'large' ? 'selected' : '' }}>Large Bag (28" x 20" x 8", 55 lbs)</option>
+                                <option value="small" {{ old('bag_type', $f['bag_type'] ?? '') == 'small' ? 'selected' : '' }}>Small Bag (18" x 14" x 4", 25 lbs)</option>
+                                <option value="medium" {{ old('bag_type', $f['bag_type'] ?? '') == 'medium' ? 'selected' : '' }}>Medium Bag (24" x 16" x 6", 40 lbs)</option>
+                                <option value="large" {{ old('bag_type', $f['bag_type'] ?? '') == 'large' ? 'selected' : '' }}>Large Bag (28" x 20" x 8", 55 lbs)</option>
                             </select>
                             @error('bag_type')
                                 <p class="text-red-500 text-sm mt-1">{{ $message }}</p>
@@ -463,7 +309,7 @@
                                 type="number"
                                 id="number_of_bags"
                                 name="number_of_bags"
-                                value="{{ old('number_of_bags', 1) }}"
+                                value="{{ old('number_of_bags', $f['number_of_bags'] ?? 1) }}"
                                 min="1"
                                 max="10"
                                 class="w-full px-3 py-2 border {{ $errors->has('number_of_bags') ? 'border-red-500' : 'border-gray-300' }} rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
@@ -484,7 +330,7 @@
                                 step="0.01"
                                 id="declared_value"
                                 name="declared_value"
-                                value="{{ old('declared_value', '4.98') }}"
+                                value="{{ old('declared_value', isset($f['declared_value']) ? number_format((float) $f['declared_value'], 2, '.', '') : '4.98') }}"
                                 min="0.01"
                                 class="w-full px-3 py-2 border {{ $errors->has('declared_value') ? 'border-red-500' : 'border-gray-300' }} rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                                 required
@@ -521,17 +367,17 @@
                                 rows="3"
                                 class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 @error('package_description') border-red-500 @enderror"
                                 required
-                            >{{ old('package_description') }}</textarea>
+                            >{{ old('package_description', $f['package_description'] ?? '') }}</textarea>
                             @error('package_description')
                                 <p class="text-red-500 text-sm mt-1">{{ $message }}</p>
                             @enderror
                         </div>
 
                         <!-- Hidden fields for weight and dimensions - auto-populated by bag type -->
-                        <input type="hidden" id="package_weight" name="package_weight" value="{{ old('package_weight') }}">
-                        <input type="hidden" id="package_length" name="package_length" value="{{ old('package_length') }}">
-                        <input type="hidden" id="package_width" name="package_width" value="{{ old('package_width') }}">
-                        <input type="hidden" id="package_height" name="package_height" value="{{ old('package_height') }}">
+                        <input type="hidden" id="package_weight" name="package_weight" value="{{ old('package_weight', $f['package_weight'] ?? '') }}">
+                        <input type="hidden" id="package_length" name="package_length" value="{{ old('package_length', $f['package_length'] ?? '') }}">
+                        <input type="hidden" id="package_width" name="package_width" value="{{ old('package_width', $f['package_width'] ?? '') }}">
+                        <input type="hidden" id="package_height" name="package_height" value="{{ old('package_height', $f['package_height'] ?? '') }}">
 
                         <!-- Show validation errors for hidden fields -->
                         @error('package_weight')
@@ -557,34 +403,36 @@
                     </div>
                 </div>
 
-                <!-- Shipping Preferences -->
+                <!-- FedEx service (pricing is quoted for this service only) -->
                 <div class="mb-10">
-                    <h2 class="text-xl font-semibold text-gray-900 mb-6 border-b pb-2">Shipping Preferences</h2>
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-
-                        <div>
-                            <label for="preferred_ship_date" class="block text-sm font-medium text-gray-700 mb-2">
-                                Preferred Ship Date *
-                            </label>
-                            <input
-                                type="date"
-                                id="preferred_ship_date"
-                                name="preferred_ship_date"
-                                value="{{ old('preferred_ship_date') }}"
-                                min="{{ date('Y-m-d') }}"
-                                class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 @error('preferred_ship_date') border-red-500 @enderror"
-                                required
-                            >
-                            @error('preferred_ship_date')
-                                <p class="text-red-500 text-sm mt-1">{{ $message }}</p>
-                            @enderror
-                        </div>
+                    <h2 class="text-xl font-semibold text-gray-900 mb-6 border-b pb-2">FedEx service</h2>
+                    <div class="max-w-xl">
+                        <label for="service_type" class="block text-sm font-medium text-gray-700 mb-2">
+                            Which service do you want to use? *
+                        </label>
+                        <select
+                            id="service_type"
+                            name="service_type"
+                            required
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 @error('service_type') border-red-500 @enderror"
+                        >
+                            <option value="">Select service</option>
+                            <option value="FEDEX_GROUND" {{ old('service_type', $f['service_type'] ?? '') == 'FEDEX_GROUND' ? 'selected' : '' }}>FedEx Ground</option>
+                            <option value="FEDEX_2_DAY" {{ old('service_type', $f['service_type'] ?? '') == 'FEDEX_2_DAY' ? 'selected' : '' }}>FedEx 2Day</option>
+                            <option value="PRIORITY_OVERNIGHT" {{ old('service_type', $f['service_type'] ?? '') == 'PRIORITY_OVERNIGHT' ? 'selected' : '' }}>FedEx Priority Overnight</option>
+                        </select>
+                        @error('service_type')
+                            <p class="text-red-500 text-sm mt-1">{{ $message }}</p>
+                        @enderror
+                        <p class="mt-2 text-sm text-gray-500">
+                            Ship date is not chosen on this step. We use the next valid business day for quoting; if you choose courier pickup on the rates page, your ship date follows the pickup date you enter before checkout.
+                        </p>
                     </div>
                 </div>
 
                 <!-- Submit Button -->
                 <div class="flex justify-between">
-                    <a href="{{ route('home') }}" class="bg-gray-500 text-white px-6 py-3 rounded-md font-medium hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2">
+                    <a href="{{ route('home') }}#start-form" class="bg-gray-500 text-white px-6 py-3 rounded-md font-medium hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2">
                         Back
                     </a>
                     <button
@@ -601,38 +449,8 @@
 
 @push('scripts')
 <script>
-    function togglePickupFields() {
-        const pickupRadio = document.querySelector('input[name="pickup_type"][value="PICKUP"]');
-        const pickupAddressSection = document.getElementById('pickup-address-section');
-        const pickupSchedulingSection = document.getElementById('pickup-scheduling-section');
-        const deliveryMethodHidden = document.getElementById('delivery_method_hidden');
-
-        if (pickupRadio && pickupRadio.checked) {
-            pickupAddressSection.classList.remove('hidden');
-            pickupSchedulingSection.classList.remove('hidden');
-            deliveryMethodHidden.value = 'pickup';
-
-            // Make pickup fields required
-            document.getElementById('pickup_date').required = true;
-            document.getElementById('pickup_time_slot').required = true;
-        } else {
-            pickupAddressSection.classList.add('hidden');
-            pickupSchedulingSection.classList.add('hidden');
-            deliveryMethodHidden.value = 'dropoff';
-
-            // Remove required attribute from pickup fields
-            document.getElementById('pickup_date').required = false;
-            document.getElementById('pickup_time_slot').required = false;
-        }
-    }
-
-    // Legacy function for backward compatibility
-    function togglePickupAddress() {
-        togglePickupFields();
-    }
-
-    // Load cities for a state
-    function loadCitiesForState(stateCode, citySelect) {
+    // Load cities for a state (selectedValue = saved option value, city name, or custom text)
+    function loadCitiesForState(stateCode, citySelect, selectedValue) {
         if (!stateCode) {
             citySelect.innerHTML = '<option value="">Select City</option>';
             return;
@@ -655,6 +473,29 @@
                 otherOption.value = 'other';
                 otherOption.textContent = 'Other (enter custom city)';
                 citySelect.appendChild(otherOption);
+
+                if (selectedValue) {
+                    let matched = false;
+                    for (let i = 0; i < citySelect.options.length; i++) {
+                        const o = citySelect.options[i];
+                        if (o.value === selectedValue || o.textContent === selectedValue) {
+                            citySelect.value = o.value;
+                            matched = true;
+                            break;
+                        }
+                    }
+                    if (!matched) {
+                        citySelect.value = 'other';
+                        const custom = document.getElementById('recipient_city_custom');
+                        if (custom) {
+                            custom.value = selectedValue;
+                            custom.classList.remove('hidden');
+                            custom.required = true;
+                            citySelect.required = false;
+                        }
+                    }
+                }
+                toggleCustomCity('recipient_city', 'recipient_city_custom');
             })
             .catch(error => {
                 console.error('Error loading cities:', error);
@@ -748,35 +589,7 @@
 
     // Initialize on page load
     document.addEventListener('DOMContentLoaded', function() {
-        togglePickupFields();
         updateBagSpecifications();
-
-        // Add form validation debugging
-        const form = document.querySelector('form');
-        if (form) {
-            form.addEventListener('submit', function(e) {
-                console.log('Form submission started');
-
-                // Check if required fields are filled
-                const bagType = document.getElementById('bag_type');
-                const numberOfBags = document.getElementById('number_of_bags');
-
-                if (!bagType.value) {
-                    console.log('Bag type is required');
-                    e.preventDefault();
-                    return false;
-                }
-
-                if (!numberOfBags.value || numberOfBags.value < 1 || numberOfBags.value > 10) {
-                    console.log('Number of bags is required and must be between 1-10');
-                    e.preventDefault();
-                    return false;
-                }
-
-
-                console.log('Form validation passed');
-            });
-        }
 
         // Add real-time validation for bag fields
         const bagTypeSelect = document.getElementById('bag_type');
@@ -807,151 +620,12 @@
             });
         }
 
-        // Get elements
-        const pickupCity = document.getElementById('pickup_city');
         const recipientCity = document.getElementById('recipient_city');
-
-        // Load initial cities based on selected states
-        const originState = '{{ $origin_state }}';
         const destinationState = '{{ $destination_state }}';
+        const recipientCityPreset = @json(old('recipient_city', $f['recipient_city'] ?? ''));
 
-        if (originState) {
-            loadCitiesForState(originState, pickupCity);
-        }
-
-        if (destinationState) {
-            loadCitiesForState(destinationState, recipientCity);
-        }
-
-        // Prevent selecting past dates for shipment - robust validation
-        const shipDateInput = document.getElementById('preferred_ship_date');
-        if (shipDateInput) {
-            // Function to get today's date string
-            function getTodayString() {
-                const now = new Date();
-                const year = now.getFullYear();
-                const month = String(now.getMonth() + 1).padStart(2, '0');
-                const day = String(now.getDate()).padStart(2, '0');
-                return `${year}-${month}-${day}`;
-            }
-            
-            // Set min date dynamically on page load (overrides server-side value)
-            const today = getTodayString();
-            shipDateInput.setAttribute('min', today);
-            
-            // Set default value to today if empty
-            if (!shipDateInput.value) {
-                shipDateInput.value = today;
-            }
-            
-            // Validate on change
-            shipDateInput.addEventListener('change', function() {
-                const selectedValue = this.value;
-                const todayValue = getTodayString();
-                
-                if (selectedValue < todayValue) {
-                    alert('Ship date cannot be in the past. It has been reset to today.');
-                    this.value = todayValue;
-                }
-            });
-            
-            // Validate on blur (when user leaves the field)
-            shipDateInput.addEventListener('blur', function() {
-                const selectedValue = this.value;
-                const todayValue = getTodayString();
-                
-                if (selectedValue && selectedValue < todayValue) {
-                    this.value = todayValue;
-                }
-            });
-            
-            // Validate before form submission
-            const form = shipDateInput.closest('form');
-            if (form) {
-                form.addEventListener('submit', function(e) {
-                    const selectedValue = shipDateInput.value;
-                    const todayValue = getTodayString();
-                    
-                    if (selectedValue < todayValue) {
-                        e.preventDefault();
-                        alert('Ship date cannot be in the past. Please select today or a future date.');
-                        shipDateInput.value = todayValue;
-                        shipDateInput.focus();
-                        return false;
-                    }
-                });
-            }
-        }
-        
-        // Prevent selecting invalid pickup dates (with 3 PM cutoff logic)
-        const pickupDateInput = document.getElementById('pickup_date');
-        if (pickupDateInput) {
-            // Function to get minimum pickup date based on cutoff
-            function getMinPickupDateString() {
-                const now = new Date();
-                const cutoffHour = 15; // 3 PM
-                
-                let minDate;
-                // If past 3 PM, pickup must be tomorrow or later
-                if (now.getHours() >= cutoffHour) {
-                    minDate = new Date();
-                    minDate.setDate(minDate.getDate() + 1);
-                } else {
-                    // Before 3 PM, pickup can be today
-                    minDate = new Date();
-                }
-                
-                const year = minDate.getFullYear();
-                const month = String(minDate.getMonth() + 1).padStart(2, '0');
-                const day = String(minDate.getDate()).padStart(2, '0');
-                return `${year}-${month}-${day}`;
-            }
-            
-            // Set min date dynamically based on cutoff
-            const minPickupDate = getMinPickupDateString();
-            pickupDateInput.setAttribute('min', minPickupDate);
-            
-            // Validate on change
-            pickupDateInput.addEventListener('change', function() {
-                const selectedValue = this.value;
-                const minDateValue = getMinPickupDateString();
-                
-                if (selectedValue < minDateValue) {
-                    const now = new Date();
-                    if (now.getHours() >= 15) {
-                        alert('It is past 3 PM cutoff time. Pickup must be scheduled for tomorrow or later.');
-                    } else {
-                        alert('Pickup date cannot be in the past.');
-                    }
-                    this.value = minDateValue;
-                }
-            });
-            
-            // Validate before form submission
-            const form = pickupDateInput.closest('form');
-            if (form) {
-                const existingListener = form.getAttribute('data-pickup-validated');
-                if (!existingListener) {
-                    form.addEventListener('submit', function(e) {
-                        const selectedValue = pickupDateInput.value;
-                        const minDateValue = getMinPickupDateString();
-                        
-                        if (selectedValue && selectedValue < minDateValue) {
-                            e.preventDefault();
-                            const now = new Date();
-                            if (now.getHours() >= 15) {
-                                alert('It is past 3 PM. Pickup must be scheduled for tomorrow or later.');
-                            } else {
-                                alert('Invalid pickup date. Please select today or a future date.');
-                            }
-                            pickupDateInput.value = minDateValue;
-                            pickupDateInput.focus();
-                            return false;
-                        }
-                    });
-                    form.setAttribute('data-pickup-validated', 'true');
-                }
-            }
+        if (destinationState && recipientCity) {
+            loadCitiesForState(destinationState, recipientCity, recipientCityPreset);
         }
     });
 </script>

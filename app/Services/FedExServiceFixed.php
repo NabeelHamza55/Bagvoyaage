@@ -8,6 +8,7 @@ use App\Models\Shipment;
 use App\Models\ShipmentRate;
 use Exception;
 use Carbon\Carbon;
+use DateInterval;
 
 class FedExServiceFixed
 {
@@ -20,11 +21,45 @@ class FedExServiceFixed
 
     public function __construct()
     {
-        $this->baseUrl = config('services.fedex.base_url');
+        $this->baseUrl = rtrim((string) config('services.fedex.base_url'), '/');
         $this->apiKey = config('services.fedex.api_key');
         $this->secretKey = config('services.fedex.secret_key');
         $this->accountNumber = config('services.fedex.account_number');
         $this->meterNumber = config('services.fedex.meter_number');
+    }
+
+    /**
+     * FedEx returns NOT.FOUND.ERROR with "no longer available" for wrong URLs, disabled APIs, or env mismatch.
+     */
+    private function humanizeFedExNotFound(?array $errorJson, string $context): ?string
+    {
+        if (! is_array($errorJson) || empty($errorJson['errors'][0]) || ! is_array($errorJson['errors'][0])) {
+            return null;
+        }
+        $e0 = $errorJson['errors'][0];
+        $code = (string) ($e0['code'] ?? '');
+        $msg = (string) ($e0['message'] ?? '');
+        if ($code !== 'NOT.FOUND.ERROR' && stripos($msg, 'no longer available') === false) {
+            return null;
+        }
+
+        $baseHint = 'This usually means FEDEX_BASE_URL does not match your credentials (use https://apis-sandbox.fedex.com for test keys, https://apis.fedex.com for production), or the required API product is not enabled on your FedEx Developer project.';
+
+        return match ($context) {
+            'rates'  => 'FedEx could not reach the rate-quote endpoint. '.$baseHint.' The path must be /rate/v1/rates/quotes.',
+            'ship'   => 'FedEx could not complete the ship request (resource not found). '.$baseHint,
+            default  => 'FedEx returned "resource not found." '.$baseHint,
+        };
+    }
+
+    /**
+     * FedEx pickup availability endpoint path.
+     * Official path (confirmed by FedEx documentation): /pickup/v1/pickups/availabilities
+     */
+    private function pickupAvailabilityPath(): string
+    {
+        $path = (string) config('services.fedex.pickup_availability_path', '/pickup/v1/pickups/availabilities');
+        return '/' . ltrim(trim($path), '/');
     }
 
     /**
@@ -37,10 +72,25 @@ class FedExServiceFixed
         }
 
         try {
-            $response = Http::asForm()->post($this->baseUrl . '/oauth/token', [
+            $url = $this->baseUrl . '/oauth/token';
+
+            Log::info('━━━ [STEP: OAUTH] Requesting FedEx access token', [
+                'url'        => $url,
                 'grant_type' => 'client_credentials',
-                'client_id' => $this->apiKey,
-                'client_secret' => $this->secretKey
+                'client_id'  => substr((string) $this->apiKey, 0, 6) . '…',
+            ]);
+
+            $response = Http::asForm()->post($url, [
+                'grant_type'    => 'client_credentials',
+                'client_id'     => $this->apiKey,
+                'client_secret' => $this->secretKey,
+            ]);
+
+            Log::info('[STEP: OAUTH] Response', [
+                'status_code'   => $response->status(),
+                'token_obtained' => $response->successful(),
+                'token_type'    => $response->json('token_type'),
+                'expires_in'    => $response->json('expires_in'),
             ]);
 
             if ($response->successful()) {
@@ -51,7 +101,7 @@ class FedExServiceFixed
 
             throw new Exception('Failed to get FedEx access token: ' . $response->body());
         } catch (Exception $e) {
-            Log::error('FedEx OAuth Error: ' . $e->getMessage());
+            Log::error('[STEP: OAUTH] ERROR — ' . $e->getMessage());
             throw $e;
         }
     }
@@ -74,11 +124,11 @@ class FedExServiceFixed
         }
 
         $serviceType = $selectedRate->service_type;
-        Log::info('Using selected rate service type', [
-            'shipment_id' => $shipment->id,
-            'selected_service_type' => $serviceType,
-            'rate_id' => $selectedRate->id
-        ]);
+            Log::info('━━━ [STEP 3/4: CREATE SHIPMENT] Starting FedEx shipment creation', [
+                'shipment_id'          => $shipment->id,
+                'selected_service_type'=> $serviceType,
+                'rate_id'              => $selectedRate->id,
+            ]);
 
             // Validate service type compatibility
             $this->validateServiceTypeCompatibility($serviceType, $shipment);
@@ -89,18 +139,16 @@ class FedExServiceFixed
             // Get package weight for logging
             $packageWeight = $shipment->getTotalWeight();
 
-            Log::info('Creating FedEx shipment', [
-                'shipment_id' => $shipment->id,
-                'package_weight' => $packageWeight,
-                'bag_type' => $shipment->bag_type,
-                'number_of_bags' => $shipment->number_of_bags,
-                'is_domestic' => $isDomestic,
-                'is_same_state' => $isSameState,
-                'service_type' => $serviceType,
-                'using_selected_rate' => !empty($selectedRate),
-                'selected_rate_id' => $selectedRate->id ?? null,
-                'sender_state' => $shipment->sender_state,
-                'recipient_state' => $shipment->recipient_state
+            Log::info('[STEP 3/4: CREATE SHIPMENT] Shipment details', [
+                'shipment_id'     => $shipment->id,
+                'package_weight'  => $packageWeight,
+                'bag_type'        => $shipment->bag_type,
+                'number_of_bags'  => $shipment->number_of_bags,
+                'is_domestic'     => $isDomestic,
+                'is_same_state'   => $isSameState,
+                'service_type'    => $serviceType,
+                'sender_state'    => $shipment->sender_state,
+                'recipient_state' => $shipment->recipient_state,
             ]);
 
             // Validate required fields
@@ -247,36 +295,17 @@ class FedExServiceFixed
                 ]
             ];
 
-            // Log the payload for debugging
-            Log::debug('FedEx shipment payload', [
+            Log::info('[STEP 3/4: CREATE SHIPMENT] ► REQUEST payload', [
                 'shipment_id' => $shipment->id,
                 'pickup_type' => $pickupType,
-                'service_type' => $shipment->selectedRate->service_type
-            ]);
-
-            // Also log the actual payload structure for debugging
-            Log::debug('Full FedEx payload structure', [
-                'shipment_id' => $shipment->id,
-                'payload' => $payload
+                'service_type'=> $shipment->selectedRate->service_type,
+                'payload'     => $payload,
             ]);
 
             // Validate payload before sending
             $this->validateFedExPayload($payload);
 
-            // Use the correct FedEx API endpoint
             $endpoint = $this->baseUrl . '/ship/v1/shipments';
-
-            Log::info('Making FedEx API request', [
-                'shipment_id' => $shipment->id,
-                'endpoint' => $endpoint,
-                'payload_size' => strlen(json_encode($payload))
-            ]);
-
-            // Log the full payload for debugging
-            Log::info('FedEx API request payload', [
-                'shipment_id' => $shipment->id,
-                'payload_json' => json_encode($payload)
-            ]);
 
             // Remove any null or empty fields recursively
             function array_filter_recursive($input)
@@ -300,7 +329,13 @@ class FedExServiceFixed
 
             if ($response->successful()) {
                 $data = $response->json();
-                log::info("fedex response", $data);
+
+                Log::info('[STEP 3/4: CREATE SHIPMENT] ◄ RESPONSE success', [
+                    'shipment_id'    => $shipment->id,
+                    'status_code'    => $response->status(),
+                    'full_response'  => $data,
+                ]);
+
                 $trackingNumber = $data['output']['transactionShipments'][0]['pieceResponses'][0]['trackingNumber'] ?? null;
                 $pieceResponse = $data['output']['transactionShipments'][0]['pieceResponses'][0] ?? null;
 
@@ -398,14 +433,16 @@ class FedExServiceFixed
 
 
             $errorBody = $response->body();
-            Log::error('FedEx Shipment API Error', [
-                'shipment_id' => $shipment->id,
-                'status_code' => $response->status(),
-                'response_body' => $errorBody
+            Log::error('[STEP 3/4: CREATE SHIPMENT] ◄ RESPONSE error', [
+                'shipment_id'   => $shipment->id,
+                'status_code'   => $response->status(),
+                'response_body' => $errorBody,
+                'response_json' => $response->json(),
             ]);
 
             // Try to parse error response
             $errorMessage = 'Failed to create FedEx shipment';
+            $errorData = null;
             try {
                 $errorData = $response->json();
                 if (isset($errorData['errors']) && is_array($errorData['errors']) && !empty($errorData['errors'])) {
@@ -472,6 +509,13 @@ class FedExServiceFixed
                     'exception' => $parseException->getMessage(),
                     'response_body' => $errorBody
                 ]);
+            }
+
+            if (is_array($errorData)) {
+                $notFoundHint = $this->humanizeFedExNotFound($errorData, 'ship');
+                if ($notFoundHint !== null) {
+                    throw new Exception($notFoundHint);
+                }
             }
 
             throw new Exception($errorMessage);
@@ -969,87 +1013,272 @@ class FedExServiceFixed
 
 
     /**
+     * Pickup location fed to FedEx (for UI display).
+     */
+    public function resolvedPickupAddressForShipment(Shipment $shipment): array
+    {
+        return $this->resolveFedExPickupAddress($shipment);
+    }
+
+    /**
+     * Street, city, state, postal for pickup — uses explicit pickup fields when set, else sender.
+     */
+    private function resolveFedExPickupAddress(Shipment $shipment): array
+    {
+        $hasPickupFields = $shipment->pickup_type === 'PICKUP'
+            && !empty(trim((string) $shipment->pickup_address))
+            && !empty(trim((string) $shipment->pickup_city))
+            && !empty(trim((string) $shipment->pickup_state))
+            && !empty(trim((string) $shipment->pickup_postal_code));
+
+        if ($hasPickupFields) {
+            return [
+                'streetLines' => [trim($shipment->pickup_address)],
+                'city' => trim($shipment->pickup_city),
+                'stateOrProvinceCode' => strtoupper(substr(trim($shipment->pickup_state), 0, 2)),
+                'postalCode' => preg_replace('/\D/', '', (string) $shipment->pickup_postal_code),
+                'countryCode' => 'US',
+            ];
+        }
+
+        return [
+            'streetLines' => [trim((string) $shipment->sender_address_line)],
+            'city' => trim((string) $shipment->sender_city),
+            'stateOrProvinceCode' => strtoupper(substr(trim((string) $shipment->sender_state), 0, 2)),
+            'postalCode' => preg_replace('/\D/', '', (string) $shipment->sender_zipcode),
+            'countryCode' => 'US',
+        ];
+    }
+
+    /**
+     * Approximate IANA timezone for pickup cutoff / local timestamps (US domestic).
+     */
+    private function timezoneForUsState(string $state): string
+    {
+        $state = strtoupper(substr($state, 0, 2));
+
+        $hawaii = ['HI'];
+        $alaska = ['AK'];
+        $pacific = ['CA', 'NV', 'WA', 'OR'];
+        $arizona = ['AZ'];
+        $mountain = ['CO', 'WY', 'MT', 'NM', 'UT', 'ID'];
+        $central = [
+            'AL', 'AR', 'IA', 'IL', 'KS', 'LA', 'MN', 'MS', 'MO', 'NE', 'ND', 'OK', 'SD', 'TX', 'WI',
+            'TN', 'IN', 'KY',
+        ];
+        $eastern = [
+            'ME', 'NH', 'VT', 'MA', 'RI', 'CT', 'NY', 'NJ', 'DE', 'MD', 'PA', 'VA', 'WV', 'NC', 'SC', 'GA', 'FL',
+            'OH', 'MI', 'DC',
+        ];
+
+        if (in_array($state, $hawaii, true)) {
+            return 'Pacific/Honolulu';
+        }
+        if (in_array($state, $alaska, true)) {
+            return 'America/Anchorage';
+        }
+        if (in_array($state, $pacific, true)) {
+            return 'America/Los_Angeles';
+        }
+        if (in_array($state, $arizona, true)) {
+            return 'America/Phoenix';
+        }
+        if (in_array($state, $mountain, true)) {
+            return 'America/Denver';
+        }
+        if (in_array($state, $central, true)) {
+            return 'America/Chicago';
+        }
+        if (in_array($state, $eastern, true)) {
+            return 'America/New_York';
+        }
+
+        return 'America/Chicago';
+    }
+
+    /**
+     * Parse FedEx access time into a DateInterval.
+     *
+     * FedEx returns this in two formats:
+     *   - ISO-8601 duration string: "PT4H0M"
+     *   - Object (from the Availability endpoint): {"hours": 1, "minutes": 30}
+     *
+     * @param string|array|null $accessTime
+     */
+    private function parseFedExAccessInterval($accessTime): DateInterval
+    {
+        // Object format from the availability endpoint: {"hours": X, "minutes": Y}
+        if (is_array($accessTime)) {
+            $hours   = (int) ($accessTime['hours']   ?? 0);
+            $minutes = (int) ($accessTime['minutes'] ?? 0);
+            if ($hours > 0 || $minutes > 0) {
+                try {
+                    return new DateInterval("PT{$hours}H{$minutes}M");
+                } catch (\Exception) {
+                    // fall through to default
+                }
+            }
+        }
+
+        // ISO-8601 duration string format: "PT4H0M"
+        if (is_string($accessTime) && preg_match('/^P/i', $accessTime)) {
+            try {
+                return new DateInterval($accessTime);
+            } catch (\Exception) {
+                // fall through
+            }
+        }
+
+        return new DateInterval('PT4H0M');
+    }
+
+    /**
+     * @return array{ready: Carbon, close: Carbon, customer_close_time: string}
+     */
+    private function derivePickupReadyAndCloseTimes(
+        ?array $availabilitySlot,
+        Carbon $pickupDateLocal,
+        string $timeSlot,
+        string $pickupState
+    ): array {
+        $tz = $this->timezoneForUsState($pickupState);
+        $dateStr = $pickupDateLocal->format('Y-m-d');
+
+        $accessRaw = null;
+        if ($availabilitySlot) {
+            // accessTime may be an array {hours,minutes} (availability endpoint) or an ISO string
+            $accessRaw = $availabilitySlot['accessTime']
+                ?? $availabilitySlot['accessDuration']
+                ?? $availabilitySlot['access_time']
+                ?? null;
+        }
+        $accessInterval = $this->parseFedExAccessInterval($accessRaw);
+
+        $defaultReady = null;
+        if ($availabilitySlot) {
+            $dr = $availabilitySlot['defaultReadyTime']
+                ?? $availabilitySlot['defaultReadyTimestamp']
+                ?? $availabilitySlot['readyTime']
+                ?? $availabilitySlot['defaultPickupReadyTime']
+                ?? null;
+            if (is_string($dr)) {
+                try {
+                    if (preg_match('/^\d{2}:\d{2}(:\d{2})?$/', $dr)) {
+                        $defaultReady = Carbon::createFromFormat('Y-m-d H:i:s', $dateStr . ' ' . (strlen($dr) === 5 ? $dr . ':00' : $dr), $tz);
+                    } else {
+                        $defaultReady = Carbon::parse($dr, $tz);
+                    }
+                } catch (\Exception) {
+                    $defaultReady = null;
+                }
+            }
+        }
+
+        $slotStarts = [
+            'morning' => '08:00:00',
+            'afternoon' => '11:00:00',
+            'evening' => '13:00:00',
+        ];
+        $slotEnds = [
+            'morning' => '12:00:00',
+            'afternoon' => '16:00:00',
+            'evening' => '18:00:00',
+        ];
+
+        $startHms = $slotStarts[$timeSlot] ?? $slotStarts['morning'];
+        $endHms = $slotEnds[$timeSlot] ?? $slotEnds['morning'];
+
+        if ($defaultReady) {
+            $ready = $defaultReady->copy()->timezone($tz);
+        } else {
+            $ready = Carbon::createFromFormat('Y-m-d H:i:s', $dateStr . ' ' . $startHms, $tz);
+        }
+
+        $slotEnd = Carbon::createFromFormat('Y-m-d H:i:s', $dateStr . ' ' . $endHms, $tz);
+        $minClose = $ready->copy()->add($accessInterval);
+        $close = $minClose->gt($slotEnd) ? $minClose : $slotEnd;
+
+        return [
+            'ready' => $ready,
+            'close' => $close,
+            'customer_close_time' => $close->format('H:i:s'),
+        ];
+    }
+
+    /**
      * Schedule a pickup with FedEx
      */
     public function schedulePickup(Shipment $shipment): array
     {
-        Log::info('=== FEDEX PICKUP SCHEDULING METHOD CALLED ===', [
+        Log::info('━━━ [STEP 4/4: SCHEDULE PICKUP] Starting FedEx pickup scheduling', [
             'shipment_id' => $shipment->id,
-            'method' => 'schedulePickup',
-            'timestamp' => now()->format('Y-m-d H:i:s')
+            'timestamp'   => now()->format('Y-m-d H:i:s'),
         ]);
 
         try {
-            Log::info('=== FEDEX PICKUP SCHEDULING STARTED ===', [
-                'shipment_id' => $shipment->id,
-                'pickup_type' => $shipment->pickup_type,
-                'pickup_address' => $shipment->sender_address_line,
-                'pickup_date' => $shipment->preferred_ship_date->format('Y-m-d'),
-                'service_type' => $shipment->selectedRate->service_type
+            if (!$shipment->selectedRate || empty($shipment->selectedRate->service_type)) {
+                throw new \Exception('No service type selected. Cannot schedule FedEx pickup.');
+            }
+
+            $pickupAddr = $this->resolveFedExPickupAddress($shipment);
+            if (empty($pickupAddr['streetLines'][0]) || empty($pickupAddr['city'])
+                || empty($pickupAddr['stateOrProvinceCode']) || empty($pickupAddr['postalCode'])) {
+                throw new \Exception('Missing required pickup location address for FedEx pickup scheduling');
+            }
+
+            Log::info('[STEP 4/4: SCHEDULE PICKUP] Pickup details', [
+                'shipment_id'  => $shipment->id,
+                'pickup_type'  => $shipment->pickup_type,
+                'pickup_address' => $pickupAddr['streetLines'][0] ?? '',
+                'pickup_date'  => $shipment->preferred_ship_date->format('Y-m-d'),
+                'service_type' => $shipment->selectedRate->service_type,
             ]);
 
             $token = $this->getAccessToken();
 
-            Log::info('FedEx access token obtained for pickup scheduling', [
-                'shipment_id' => $shipment->id,
-                'token_obtained' => !empty($token)
+            Log::info('[STEP 4/4: SCHEDULE PICKUP] Access token obtained', [
+                'shipment_id'    => $shipment->id,
+                'token_obtained' => !empty($token),
             ]);
 
             // Validate and limit package weight
-            $weight = (float)min($shipment->package_weight, 150);
+            $weight = (float) min($shipment->getTotalWeight(), 150);
             $formattedWeight = number_format($weight, 2);
 
-            // Validate required address data
-            if (empty($shipment->sender_address_line) || empty($shipment->sender_city) ||
-                empty($shipment->sender_state) || empty($shipment->sender_zipcode)) {
-                throw new \Exception('Missing required sender address information for pickup scheduling');
-            }
-
-            $pickupAddress = $shipment->sender_address_line;
-            $pickupCity = $shipment->sender_city;
-            $pickupState = $shipment->sender_state;
-            $pickupPostalCode = $shipment->sender_zipcode;
+            $pickupCity = $pickupAddr['city'];
+            $pickupState = $pickupAddr['stateOrProvinceCode'];
+            $pickupPostalCode = $pickupAddr['postalCode'];
 
             // Get valid pickup and ship dates
             $dates = $this->calculatePickupAndShipDates($shipment);
             $pickupDate = $dates['pickup_date'];
             $shipDate = $dates['ship_date'];
 
-            Log::info('Pickup date validation', [
-                'shipment_id' => $shipment->id,
-                'original_preferred_date' => $shipment->preferred_ship_date->format('Y-m-d'),
-                'final_pickup_date' => $pickupDate->format('Y-m-d'),
-                'final_ship_date' => $shipDate->format('Y-m-d'),
-                'is_weekend' => $pickupDate->isWeekend(),
-                'day_of_week' => $pickupDate->format('l'),
-                'current_hour' => \Carbon\Carbon::now()->hour
-            ]);
+            // Availability was already verified on the pickup-details page.
+            // Use the ready/close times the user chose from the FedEx-provided options.
+            $storedReady = trim((string) ($shipment->pickup_ready_time ?? '15:00:00'));
+            $storedClose = trim((string) ($shipment->pickup_close_time ?? '18:00:00'));
 
-            // Format times according to FedEx documentation
-            // Use safe times that are well before cutoff (8 AM - 2 PM window)
-            $timeSlot = $shipment->pickup_time_slot ?? 'morning';
-            
-            // Always schedule pickup for the pickup date, not today
-            $pickupDateStr = $pickupDate->format('Y-m-d');
-            
-            switch ($timeSlot) {
-                case 'morning':
-                    $readyTime = $pickupDateStr . 'T08:00:00-05:00';
-                    $closeTime = '12:00:00';
-                    break;
-                case 'afternoon':
-                    $readyTime = $pickupDateStr . 'T11:00:00-05:00';
-                    $closeTime = '15:00:00';
-                    break;
-                case 'evening':
-                    // Evening pickups are risky - use early afternoon instead
-                    $readyTime = $pickupDateStr . 'T10:00:00-05:00';
-                    $closeTime = '14:00:00';
-                    break;
-                default:
-                    $readyTime = $pickupDateStr . 'T09:00:00-05:00';
-                    $closeTime = '15:00:00';
-            }
+            // Normalise to HH:MM:SS
+            if (preg_match('/^\d{2}:\d{2}$/', $storedReady)) $storedReady .= ':00';
+            if (preg_match('/^\d{2}:\d{2}$/', $storedClose)) $storedClose .= ':00';
+
+            // Build ISO-8601 timestamp for readyDateTimestamp
+            $tz = $this->timezoneForUsState($pickupState);
+            $readyTime = Carbon::createFromFormat(
+                'Y-m-d H:i:s',
+                $pickupDate->format('Y-m-d') . ' ' . $storedReady,
+                $tz
+            )->format('c');
+            $closeTime = $storedClose;
+
+            Log::info('[STEP 4/4: SCHEDULE PICKUP] Pickup timing', [
+                'shipment_id'        => $shipment->id,
+                'pickup_date'        => $pickupDate->format('Y-m-d'),
+                'ship_date'          => $shipDate->format('Y-m-d'),
+                'readyDateTimestamp' => $readyTime,
+                'customerCloseTime'  => $closeTime,
+            ]);
 
             // Determine carrier code based on service type
             $serviceType = $shipment->selectedRate->service_type;
@@ -1067,7 +1296,7 @@ class FedExServiceFixed
                             'phoneNumber' => $this->formatPhoneNumber($shipment->sender_phone)
                         ],
                         'address' => [
-                            'streetLines' => [$pickupAddress],
+                            'streetLines' => $pickupAddr['streetLines'],
                             'city' => $pickupCity,
                             'stateOrProvinceCode' => $pickupState,
                             'postalCode' => $pickupPostalCode,
@@ -1086,24 +1315,21 @@ class FedExServiceFixed
                 ]
             ];
 
-            // Log the complete payload for debugging
-            Log::info('FedEx pickup payload FULL', [
+            Log::info('[STEP 4/4: SCHEDULE PICKUP] ► REQUEST payload', [
                 'shipment_id' => $shipment->id,
-                'payload' => $payload
+                'url'         => $this->baseUrl . '/pickup/v1/pickups',
+                'payload'     => $payload,
             ]);
 
-            // Make the API request with retry logic for service unavailable errors
             $maxRetries = 3;
-            $retryDelay = 5; // seconds
-            $response = null;
+            $retryDelay = 5;
+            $response   = null;
 
             for ($attempt = 1; $attempt <= $maxRetries; $attempt++) {
-                Log::info('Making FedEx pickup API request', [
+                Log::info('[STEP 4/4: SCHEDULE PICKUP] Sending request', [
                     'shipment_id' => $shipment->id,
-                    'endpoint' => $this->baseUrl . '/pickup/v1/pickups',
-                    'payload_size' => strlen(json_encode($payload)),
-                    'attempt' => $attempt,
-                    'max_retries' => $maxRetries
+                    'attempt'     => $attempt,
+                    'max_retries' => $maxRetries,
                 ]);
 
                 $response = \Illuminate\Support\Facades\Http::withHeaders([
@@ -1135,26 +1361,17 @@ class FedExServiceFixed
             if ($response->successful()) {
                 $data = $response->json();
                 $confirmationNumber = $data['output']['pickupConfirmationCode'] ?? null;
-                $location = $data['output']['location'] ?? null;
-                $scheduledDate = $data['output']['scheduledDate'] ?? $pickupDate->format('Y-m-d');
+                $location           = $data['output']['location'] ?? null;
+                $scheduledDate      = $data['output']['scheduledDate'] ?? $pickupDate->format('Y-m-d');
 
-                Log::info('=== FEDEX PICKUP API RESPONSE SUCCESS ===', [
-                    'shipment_id' => $shipment->id,
-                    'status_code' => $response->status(),
+                Log::info('[STEP 4/4: SCHEDULE PICKUP] ◄ RESPONSE success', [
+                    'shipment_id'         => $shipment->id,
+                    'status_code'         => $response->status(),
                     'confirmation_number' => $confirmationNumber,
-                    'location' => $location,
-                    'scheduled_date' => $scheduledDate,
-                    'carrier_code' => $carrierCode,
-                    'response_keys' => array_keys($data)
-                ]);
-
-                // Log successful response
-                Log::info('FedEx pickup scheduled successfully', [
-                    'shipment_id' => $shipment->id,
-                    'confirmation_number' => $confirmationNumber,
-                    'location' => $location,
-                    'scheduled_date' => $scheduledDate,
-                    'carrier_code' => $carrierCode
+                    'location'            => $location,
+                    'scheduled_date'      => $scheduledDate,
+                    'carrier_code'        => $carrierCode,
+                    'full_response'       => $data,
                 ]);
 
                 return [
@@ -1172,14 +1389,13 @@ class FedExServiceFixed
 
             $errorBody = $response->body();
             $errorData = $response->json();
-            Log::error('=== FEDEX PICKUP API ERROR ===', [
-                'shipment_id' => $shipment->id,
-                'status_code' => $response->status(),
+            Log::error('[STEP 4/4: SCHEDULE PICKUP] ◄ RESPONSE error', [
+                'shipment_id'   => $shipment->id,
+                'status_code'   => $response->status(),
+                'carrier_code'  => $carrierCode,
+                'service_type'  => $serviceType,
                 'response_body' => $errorBody,
-                'error_json' => $errorData,
-                'carrier_code' => $carrierCode,
-                'service_type' => $serviceType,
-                'endpoint' => $this->baseUrl . '/pickup/v1/pickups'
+                'response_json' => $errorData,
             ]);
 
             // Try to parse error response
@@ -1216,12 +1432,11 @@ class FedExServiceFixed
                         ]);
                     }
 
-                    // Log more detailed error information
-                    Log::error('FedEx API Pickup Error Details', [
-                        'shipment_id' => $shipment->id,
-                        'errors' => $errorData['errors'],
+                    Log::error('[STEP 4/4: SCHEDULE PICKUP] Error details', [
+                        'shipment_id'    => $shipment->id,
+                        'errors'         => $errorData['errors'],
                         'transaction_id' => $errorData['transactionId'] ?? 'Unknown',
-                        'carrier_code' => $carrierCode
+                        'carrier_code'   => $carrierCode,
                     ]);
                 }
             } catch (\Exception $parseException) {
@@ -1422,6 +1637,13 @@ class FedExServiceFixed
                 (float)$shipment->package_weight
             );
 
+            Log::info('━━━ [STEP 1/4: RATES] Building rate-quote request', [
+                'shipment_id'  => $shipment->id,
+                'origin_zip'   => $shipment->sender_zipcode,
+                'dest_zip'     => $shipment->recipient_postal_code,
+                'dimensions'   => $dimensions,
+            ]);
+
             $payload = [
                 'accountNumber' => [
                     'value' => $this->accountNumber
@@ -1441,7 +1663,9 @@ class FedExServiceFixed
                             'stateOrProvinceCode' => $shipment->recipient_state
                         ]
                     ],
-                    'pickupType' => 'USE_SCHEDULED_PICKUP',
+                    'pickupType' => ($shipment->pickup_type ?? 'DROPOFF') === 'PICKUP'
+                        ? 'USE_SCHEDULED_PICKUP'
+                        : 'DROPOFF_AT_FEDEX_LOCATION',
                     'packagingType' => 'YOUR_PACKAGING',
                     'rateRequestType' => ['LIST', 'ACCOUNT'],
                     'requestedPackageLineItems' => [
@@ -1461,56 +1685,53 @@ class FedExServiceFixed
                 ]
             ];
 
-            // Log the shipping rates payload
-            Log::info('FedEx Shipping Rates Request Payload', [
+            $rateUrl = $this->baseUrl . '/rate/v1/rates/quotes';
+
+            Log::info('[STEP 1/4: RATES] ► REQUEST payload', [
                 'shipment_id' => $shipment->id,
-                'endpoint' => $this->baseUrl . '/rate/v1/rates/quotes',
-                'payload' => $payload,
-                'payload_json' => json_encode($payload, JSON_PRETTY_PRINT),
-                'payload_size' => strlen(json_encode($payload)),
-                'dimensions' => $dimensions,
-                'shipment_details' => [
-                    'sender_zipcode' => $shipment->sender_zipcode,
-                    'sender_state' => $shipment->sender_state,
-                    'recipient_postal_code' => $shipment->recipient_postal_code,
-                    'recipient_state' => $shipment->recipient_state,
-                    'weight_unit' => $shipment->weight_unit,
-                    'dimension_unit' => $shipment->dimension_unit
-                ]
+                'url'         => $rateUrl,
+                'payload'     => $payload,
             ]);
 
             $response = Http::withHeaders([
                 'Authorization' => 'Bearer ' . $token,
-                'Content-Type' => 'application/json'
-            ])->post($this->baseUrl . '/rate/v1/rates/quotes', $payload);
+                'Content-Type'  => 'application/json',
+            ])->post($rateUrl, $payload);
 
             if ($response->successful()) {
                 $responseData = $response->json();
-                
-                // Log successful response
-                Log::info('FedEx Shipping Rates Response', [
+
+                Log::info('[STEP 1/4: RATES] ◄ RESPONSE success', [
                     'shipment_id' => $shipment->id,
                     'status_code' => $response->status(),
-                    'response_keys' => array_keys($responseData),
-                    'has_rate_reply_details' => isset($responseData['output']['rateReplyDetails']),
-                    'rate_count' => isset($responseData['output']['rateReplyDetails']) 
-                        ? count($responseData['output']['rateReplyDetails']) 
-                        : 0,
-                    'response_data' => $responseData
+                    'rate_count'  => count($responseData['output']['rateReplyDetails'] ?? []),
+                    'service_types_returned' => array_column(
+                        $responseData['output']['rateReplyDetails'] ?? [], 'serviceType'
+                    ),
+                    'full_response' => $responseData,
                 ]);
-                
+
                 return $this->processRateResponse($shipment, $responseData);
             }
 
-            // Log error response
-            Log::error('FedEx Rate API Error', [
-                'shipment_id' => $shipment->id,
-                'status_code' => $response->status(),
+            Log::error('[STEP 1/4: RATES] ◄ RESPONSE error', [
+                'shipment_id'   => $shipment->id,
+                'status_code'   => $response->status(),
                 'response_body' => $response->body(),
-                'response_json' => $response->json()
+                'response_json' => $response->json(),
             ]);
-            
-            throw new Exception('Failed to get FedEx rates: ' . $response->body());
+
+            $errorJson = $response->json();
+            $notFoundHint = $this->humanizeFedExNotFound(is_array($errorJson) ? $errorJson : null, 'rates');
+            $detail = $notFoundHint;
+            if ($detail === null && is_array($errorJson) && ! empty($errorJson['errors'][0]['message'])) {
+                $detail = (string) $errorJson['errors'][0]['message'];
+            }
+            if ($detail === null) {
+                $detail = $response->body();
+            }
+
+            throw new Exception('Failed to get FedEx rates: ' . $detail);
         } catch (Exception $e) {
             Log::error('FedEx Rate Error: ' . $e->getMessage());
             throw $e;
@@ -1530,12 +1751,16 @@ class FedExServiceFixed
 
                 // Filter to show only specific FedEx services
                 $allowedServices = ['PRIORITY_OVERNIGHT', 'FEDEX_2_DAY', 'FEDEX_GROUND'];
-                if (!in_array($serviceType, $allowedServices)) {
+                if (!in_array($serviceType, $allowedServices, true)) {
                     Log::info('Filtering out service type', [
                         'shipment_id' => $shipment->id,
                         'service_type' => $serviceType,
                         'reason' => 'Not in allowed services list'
                     ]);
+                    continue;
+                }
+
+                if (!empty($shipment->service_type) && $serviceType !== $shipment->service_type) {
                     continue;
                 }
 
@@ -1591,125 +1816,212 @@ class FedExServiceFixed
     }
 
     /**
-     * Check pickup availability
+     * Check pickup availability (FedEx Pickup Request API — pickup/v1/pickups/availabilities).
+     *
+     * Payload structure follows the official FedEx v1 documentation:
+     *   - associatedAccountNumber is a plain string (not an object)
+     *   - pickupType = "ON_CALL"
+     *   - packageReadyTime and customerCloseTime are required
+     *   - numberOfBusinessDays = 1
+     *   - Response options are under output.options[], each with an "available" boolean
+     *
+     * @param  Carbon|null  $dispatchDate  When null, uses the same business rules as {@see schedulePickup()}.
      */
-    public function checkPickupAvailability(Shipment $shipment): array
+    public function checkPickupAvailability(Shipment $shipment, ?Carbon $dispatchDate = null): array
     {
         try {
+            if (!$shipment->selectedRate || empty($shipment->selectedRate->service_type)) {
+                return [
+                    'success' => false,
+                    'available' => false,
+                    'message' => 'No service type selected. Cannot check FedEx pickup availability.',
+                    'error_code' => 'PICKUP_AVAILABILITY_ERROR',
+                ];
+            }
+
             $token = $this->getAccessToken();
 
-            Log::info('Checking FedEx pickup availability', [
-                'shipment_id' => $shipment->id,
-                'pickup_address' => $shipment->sender_address_line
+            $pickupAddr = $this->resolveFedExPickupAddress($shipment);
+            if (empty($pickupAddr['streetLines'][0]) || empty($pickupAddr['city'])
+                || empty($pickupAddr['stateOrProvinceCode']) || empty($pickupAddr['postalCode'])) {
+                throw new \Exception('Missing required pickup location address for FedEx pickup availability check');
+            }
+
+            $pickupState = $pickupAddr['stateOrProvinceCode'];
+            $tz = $this->timezoneForUsState($pickupState);
+
+            if ($dispatchDate !== null) {
+                $pickupDate = $dispatchDate->copy()->startOfDay();
+            } else {
+                $dates = $this->calculatePickupAndShipDates($shipment);
+                $pickupDate = $dates['pickup_date']->copy()->startOfDay();
+            }
+
+            while ($pickupDate->isWeekend()) {
+                $pickupDate->addDay();
+            }
+
+            $nowLocal = Carbon::now($tz);
+            $isSameDayRequest = $pickupDate->format('Y-m-d') === $nowLocal->format('Y-m-d');
+            $pickupRequestType = $isSameDayRequest ? 'SAME_DAY' : 'FUTURE_DAY';
+
+            // Package-ready and customer-close times required by the availability endpoint.
+            // Use reasonable defaults: ready at 3 PM, close at 6 PM local time.
+            $packageReadyTime  = '15:00:00';
+            $customerCloseTime = '18:00:00';
+
+            Log::info('━━━ [STEP 2/4: AVAILABILITY] Checking FedEx pickup availability', [
+                'shipment_id'        => $shipment->id,
+                'pickup_address'     => $pickupAddr['streetLines'][0],
+                'dispatch_date'      => $pickupDate->format('Y-m-d'),
+                'pickup_request_type'=> $pickupRequestType,
+                'carrier_code'       => $carrierCode ?? '(resolving)',
+                'service_type'       => $shipment->selectedRate->service_type ?? '(none)',
             ]);
 
-            // Validate required address data
-            if (empty($shipment->sender_address_line) || empty($shipment->sender_city) ||
-                empty($shipment->sender_state) || empty($shipment->sender_zipcode)) {
-                throw new \Exception('Missing required sender address information for pickup availability check');
-            }
-
-            $pickupAddress = $shipment->sender_address_line;
-            $pickupCity = $shipment->sender_city;
-            $pickupState = $shipment->sender_state;
-            $pickupPostalCode = $shipment->sender_zipcode;
-
-            // Format date for pickup check
-            $pickupDate = $shipment->preferred_ship_date;
-            if ($pickupDate->isPast()) {
-                $pickupDate = \Carbon\Carbon::now()->addDay();
-                if ($pickupDate->isWeekend()) {
-                    $pickupDate = $pickupDate->next(\Carbon\Carbon::MONDAY);
-                }
-            }
-
-            // Determine carrier code based on service type
             $serviceType = $shipment->selectedRate->service_type;
             $carrierCode = str_starts_with($serviceType, 'FEDEX_GROUND') ? 'FDXG' : 'FDXE';
 
-            // Build payload according to FedEx Pickup Availability API
+            // Dimensions must be integers (same validation used by the Rate/Ship endpoints).
+            $dims = $shipment->getTotalDimensions();
+            $dimInt = $this->validatePackageDimensions(
+                (float) ($dims['length'] ?? 1),
+                (float) ($dims['width']  ?? 1),
+                (float) ($dims['height'] ?? 1),
+                (float) min($shipment->getTotalWeight(), 150)
+            );
+
+            // NOTE: associatedAccountNumber is a plain string for this endpoint (not an object).
             $payload = [
-                'associatedAccountNumber' => [
-                    'value' => $this->accountNumber
-                ],
                 'pickupAddress' => [
-                    'streetLines' => [$pickupAddress],
-                    'city' => $pickupCity,
-                    'stateOrProvinceCode' => $pickupState,
-                    'postalCode' => $pickupPostalCode,
-                    'countryCode' => 'US'
+                    'streetLines'          => $pickupAddr['streetLines'],
+                    'city'                 => $pickupAddr['city'],
+                    'stateOrProvinceCode'  => $pickupAddr['stateOrProvinceCode'],
+                    'postalCode'           => $pickupAddr['postalCode'],
+                    'countryCode'          => $pickupAddr['countryCode'] ?? 'US',
+                    'residential'          => false,
                 ],
-                'pickupRequestType' => [$pickupDate->isToday() ? 'SAME_DAY' : 'FUTURE_DAY'],
-                'dispatchDate' => $pickupDate->format('Y-m-d'),
-                'numberOfBusinessDays' => 1,
-                'shipmentAttributes' => [
-                    'serviceType' => $serviceType,
-                    'packagingType' => 'YOUR_PACKAGING',
-                    'dimensions' => [
-                        'length' => min($shipment->package_length, 108),
-                        'width' => min($shipment->package_width, 70),
-                        'height' => min($shipment->package_height, 70),
-                        'units' => 'IN'
-                    ],
-                    'weight' => [
+                'dispatchDate'         => $pickupDate->format('Y-m-d'),
+                'packageReadyTime'     => $packageReadyTime,
+                'customerCloseTime'    => $customerCloseTime,
+                'pickupType'           => 'ON_CALL',
+                'pickupRequestType'    => [$pickupRequestType],
+                'shipmentAttributes'   => [
+                    'serviceType'   => $serviceType,
+                    'packagingType' => $shipment->packaging_type ?: 'YOUR_PACKAGING',
+                    'weight'        => [
                         'units' => 'LB',
-                        'value' => min($shipment->package_weight, 150)
-                    ]
+                        'value' => $dimInt['weight'],
+                    ],
+                    'dimensions'    => [
+                        'length' => $dimInt['length'],
+                        'width'  => $dimInt['width'],
+                        'height' => $dimInt['height'],
+                        'units'  => 'IN',
+                    ],
                 ],
-                'carriers' => [$carrierCode],
-                'countryRelationship' => 'DOMESTIC'
+                'numberOfBusinessDays'        => 1,
+                'associatedAccountNumber'     => $this->accountNumber,
+                'associatedAccountNumberType' => str_starts_with($serviceType, 'FEDEX_GROUND') ? 'FEDEX_GROUND' : 'FEDEX_EXPRESS',
+                'carriers'                    => [$carrierCode],
+                'countryRelationship'         => 'DOMESTIC',
             ];
 
-            $response = \Illuminate\Support\Facades\Http::withHeaders([
+            $availabilityUrl = $this->baseUrl . $this->pickupAvailabilityPath();
+
+            Log::info('[STEP 2/4: AVAILABILITY] ► REQUEST payload', [
+                'shipment_id' => $shipment->id,
+                'url'         => $availabilityUrl,
+                'payload'     => $payload,
+            ]);
+
+            $response = Http::withHeaders([
                 'Authorization' => 'Bearer ' . $token,
-                'Content-Type' => 'application/json',
-                'X-locale' => 'en_US'
-            ])->post($this->baseUrl . '/pickup/v1/pickup-availability', $payload);
+                'Content-Type'  => 'application/json',
+                'X-locale'      => 'en_US',
+            ])->post($availabilityUrl, $payload);
 
             if ($response->successful()) {
                 $data = $response->json();
 
-                Log::info('FedEx pickup availability checked successfully', [
-                    'shipment_id' => $shipment->id,
-                    'available' => !empty($data['output']['pickupAvailability'])
+                // Response format: output.options[] — each option has an "available" boolean.
+                $rows  = $data['output']['options'] ?? [];
+                $first = (is_array($rows) && isset($rows[0]) && is_array($rows[0])) ? $rows[0] : null;
+
+                // Consider pickup available when at least one option returns available=true.
+                $available = false;
+                if (is_array($rows)) {
+                    foreach ($rows as $opt) {
+                        if (!empty($opt['available'])) {
+                            $available = true;
+                            $first     = $opt;
+                            break;
+                        }
+                    }
+                }
+
+                // Extract standard availability fields from the matched option.
+                $cutoff = $first['cutOffTime']  ?? $first['cutoffTime']  ?? null;
+                $access = $first['accessTime']  ?? null;  // object: {hours, minutes} or null
+
+                Log::info('[STEP 2/4: AVAILABILITY] ◄ RESPONSE success', [
+                    'shipment_id'   => $shipment->id,
+                    'status_code'   => $response->status(),
+                    'available'     => $available,
+                    'options_count' => count($rows),
+                    'full_response' => $data,
                 ]);
 
                 return [
-                    'success' => true,
-                    'available' => !empty($data['output']['pickupAvailability']),
-                    'availability_data' => $data['output']['pickupAvailability'] ?? [],
-                    'cutoff_time' => $data['output']['pickupAvailability'][0]['cutoffTime'] ?? null,
-                    'access_time' => $data['output']['pickupAvailability'][0]['accessTime'] ?? null,
-                    'message' => 'Pickup availability checked successfully',
-                    'response_data' => $data
+                    'success'            => true,
+                    'available'          => $available,
+                    'availability_data'  => $rows,
+                    'availability_slot'  => $first,
+                    'cutoff_time'        => $cutoff,
+                    'access_time'        => $access,
+                    'dispatch_date_used' => $pickupDate->format('Y-m-d'),
+                    'message'            => $available
+                        ? 'Pickup availability confirmed for this location and date.'
+                        : 'FedEx returned no available pickup options for this request.',
+                    'response_data'      => $data,
                 ];
             }
 
             $errorBody = $response->body();
-            Log::error('FedEx Pickup Availability API Error', [
-                'shipment_id' => $shipment->id,
-                'status_code' => $response->status(),
-                'response_body' => $errorBody
+            $errorJson = $response->json();
+            $apiMessage = null;
+            if (is_array($errorJson)) {
+                $apiMessage = $errorJson['errors'][0]['message'] ?? $errorJson['errors'][0]['code'] ?? null;
+            }
+
+            Log::error('[STEP 2/4: AVAILABILITY] ◄ RESPONSE error', [
+                'shipment_id'   => $shipment->id,
+                'url'           => $availabilityUrl,
+                'status_code'   => $response->status(),
+                'response_body' => $errorBody,
+                'response_json' => $errorJson,
             ]);
 
-            return [
-                'success' => false,
-                'available' => false,
-                'message' => 'Failed to check pickup availability',
-                'error_code' => 'PICKUP_AVAILABILITY_ERROR'
-            ];
+            $human = $this->humanizeFedExNotFound(is_array($errorJson) ? $errorJson : null, 'pickup_availability');
 
+            return [
+                'success'       => false,
+                'available'     => false,
+                'message'       => $human ?? ($apiMessage ?: 'Failed to check FedEx pickup availability.'),
+                'error_code'    => 'PICKUP_AVAILABILITY_ERROR',
+                'response_data' => is_array($errorJson) ? $errorJson : null,
+            ];
         } catch (\Exception $e) {
             Log::error('FedEx Pickup Availability Error', [
                 'shipment_id' => $shipment->id,
-                'exception' => $e->getMessage()
+                'exception'   => $e->getMessage(),
             ]);
 
             return [
-                'success' => false,
-                'available' => false,
-                'message' => $e->getMessage(),
-                'error_code' => 'PICKUP_AVAILABILITY_ERROR'
+                'success'    => false,
+                'available'  => false,
+                'message'    => $e->getMessage(),
+                'error_code' => 'PICKUP_AVAILABILITY_ERROR',
             ];
         }
     }
@@ -1860,25 +2172,44 @@ class FedExServiceFixed
      */
     private function calculatePickupAndShipDates($shipment): array
     {
-        $now = \Carbon\Carbon::now();
-        $cutoffHour = 15; // 3 PM cutoff for same-day pickup
-        
+        $pickupAddr = $this->resolveFedExPickupAddress($shipment);
+        $tz = $this->timezoneForUsState($pickupAddr['stateOrProvinceCode'] ?? 'IL');
+        $now = Carbon::now($tz);
+        $cutoffHour = 15; // 3 PM cutoff for same-day pickup (local to pickup location)
+
         // Get valid ship date (not in past)
-        $shipDate = \Carbon\Carbon::parse($this->getValidShipDate($shipment));
-        
-        // Calculate initial pickup date
-        $pickupDate = \Carbon\Carbon::today();
-        
+        $shipDate = Carbon::parse($this->getValidShipDate($shipment));
+
+        // Calculate initial pickup date in pickup-location timezone
+        $pickupDate = Carbon::now($tz)->startOfDay();
+
         // If current time is past cutoff, pickup must be tomorrow or later
         if ($now->hour >= $cutoffHour) {
-            $pickupDate = \Carbon\Carbon::tomorrow();
+            $pickupDate = Carbon::now($tz)->addDay()->startOfDay();
         }
         
         // Skip weekends for pickup
         while ($pickupDate->isWeekend()) {
-            $pickupDate = $pickupDate->addDay();
+            $pickupDate->addDay();
         }
-        
+
+        $pd = $shipment->preferred_ship_date;
+        $preferredPickup = Carbon::create(
+            (int) $pd->year,
+            (int) $pd->month,
+            (int) $pd->day,
+            0,
+            0,
+            0,
+            $tz
+        );
+        if ($preferredPickup->gte($pickupDate)) {
+            $pickupDate = $preferredPickup;
+            while ($pickupDate->isWeekend()) {
+                $pickupDate->addDay();
+            }
+        }
+
         // CRITICAL: Pickup must be before or equal to ship date
         // If pickup date would be after ship date, we need to adjust ship date forward
         if ($pickupDate->gt($shipDate)) {
@@ -1893,7 +2224,7 @@ class FedExServiceFixed
             
             // Skip weekends for ship date too
             while ($shipDate->isWeekend()) {
-                $shipDate = $shipDate->addDay();
+                $shipDate->addDay();
             }
             
             Log::info('Adjusted ship date', [

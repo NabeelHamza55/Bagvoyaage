@@ -136,8 +136,8 @@
 
                 <div class="flex space-x-3">
                     @if($shipment->delivery_method === 'pickup' && !$shipment->pickup_scheduled)
-                        <a href="{{ route('shipment.pickup.form', $shipment) }}" class="bg-yellow-500 text-white px-4 py-2 rounded-md font-medium hover:bg-yellow-600">
-                            Schedule Pickup
+                        <a href="{{ route('shipment.pickup.form', $shipment) }}" class="rounded-md bg-amber-600 px-4 py-2 font-semibold text-white shadow hover:bg-amber-700">
+                            Schedule FedEx pickup
                         </a>
                     @endif
 

@@ -13,6 +13,22 @@ Route::post('/shipment/create', [ShipmentController::class, 'create'])->name('sh
 // Process detailed shipment form and get FedEx rates
 Route::post('/shipment/quote', [ShipmentController::class, 'getQuote'])->name('shipment.quote');
 
+// Re-open rates page for an existing shipment (same session / bookmark recovery)
+Route::get('/shipment/{shipment}/rates', [ShipmentController::class, 'showRates'])->name('shipment.rates');
+
+// Persist quote-page UI (pickup + rate) across reload / navigation within the session
+Route::post('/shipment/{shipment}/draft/quote', [ShipmentController::class, 'saveQuoteDraft'])->name('shipment.draft.quote');
+
+// Persist pickup-details phase-1 fields across reload / back-forward
+Route::post('/shipment/{shipment}/draft/pickup', [ShipmentController::class, 'savePickupDraft'])->name('shipment.draft.pickup');
+
+// Service + pickup/drop-off (single form on quote page) → pickup details or checkout
+Route::post('/shipment/{shipment}/select-rate', [ShipmentController::class, 'selectRate'])->name('shipment.select-rate');
+
+// Pickup address & schedule — required before checkout when pickup is selected; runs FedEx availability
+Route::get('/shipment/{shipment}/pickup-details', [ShipmentController::class, 'showPickupDetails'])->name('shipment.pickup-details');
+Route::post('/shipment/{shipment}/pickup-details', [ShipmentController::class, 'savePickupDetails'])->name('shipment.pickup-details.save');
+
 // Checkout page
 Route::get('/shipment/{shipment}/checkout', [ShipmentController::class, 'checkout'])->name('shipment.checkout');
 

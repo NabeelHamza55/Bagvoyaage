@@ -34,8 +34,34 @@
     </div>
 
     <div class="detail-row">
-        <span class="detail-label">Pickup Time:</span>
-        <span class="detail-value">{{ ucfirst($shipment->pickup_time_slot ?? 'Morning') }} (8:00 AM - 12:00 PM)</span>
+        <span class="detail-label">Pickup window:</span>
+        <span class="detail-value">
+            @php
+                $__fmt = function ($t) {
+                    if (!$t) return null;
+                    $t = strlen(trim($t)) === 5 ? trim($t).':00' : trim($t);
+                    try {
+                        return \Carbon\Carbon::createFromFormat('H:i:s', $t)->format('g:i A');
+                    } catch (\Throwable) {
+                        return $t;
+                    }
+                };
+                $__r = $__fmt($shipment->pickup_ready_time);
+                $__c = $__fmt($shipment->pickup_close_time);
+            @endphp
+            @if($__r && $__c)
+                Ready {{ $__r }} — latest driver access {{ $__c }}
+            @elseif($shipment->pickup_time_slot)
+                @switch($shipment->pickup_time_slot)
+                    @case('morning') Morning (8:00 AM – 12:00 PM) @break
+                    @case('afternoon') Afternoon (12:00 PM – 4:00 PM) @break
+                    @case('evening') Evening (4:00 PM – 7:00 PM) @break
+                    @default As scheduled
+                @endswitch
+            @else
+                As scheduled with FedEx
+            @endif
+        </span>
     </div>
 
     <div class="detail-row">

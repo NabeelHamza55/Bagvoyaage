@@ -11,6 +11,12 @@
             <p class="text-gray-600">Review your shipment details and complete payment</p>
         </div>
 
+        @if (session('success'))
+            <div class="mb-6 rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-800" role="status">
+                {{ session('success') }}
+            </div>
+        @endif
+
         @if (empty(config('services.paypal.client_id')) || config('services.paypal.client_id') === 'YOUR_PAYPAL_CLIENT_ID')
             <div class="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-8">
                 <div class="flex">
@@ -72,9 +78,35 @@
                                 <span class="font-medium ml-1 capitalize">{{ $shipment->delivery_method }}</span>
                             </div>
                             <div>
-                                <span class="text-gray-600">Ship Date:</span>
+                                <span class="text-gray-600">{{ $shipment->pickup_type === 'PICKUP' ? 'Ship / pickup date:' : 'Ship date:' }}</span>
                                 <span class="font-medium ml-1">{{ $shipment->preferred_ship_date->format('M j, Y') }}</span>
                             </div>
+                            @if($shipment->pickup_type === 'PICKUP' && $shipment->pickup_date)
+                                @php
+                                    $fmtP = function ($t) {
+                                        if (!$t) return '—';
+                                        $t = strlen(trim($t)) === 5 ? trim($t).':00' : trim($t);
+                                        try {
+                                            return \Carbon\Carbon::createFromFormat('H:i:s', $t)->format('g:i A');
+                                        } catch (\Throwable) {
+                                            return $t;
+                                        }
+                                    };
+                                @endphp
+                                <div class="md:col-span-2 text-sm">
+                                    <span class="text-gray-600">FedEx pickup:</span>
+                                    <span class="font-medium ml-1">{{ $shipment->pickup_date->format('M j, Y') }}</span>
+                                    @if($shipment->pickup_ready_time && $shipment->pickup_close_time)
+                                        <span class="text-gray-600"> · Ready </span>
+                                        <span class="font-medium">{{ $fmtP($shipment->pickup_ready_time) }}</span>
+                                        <span class="text-gray-600"> — latest </span>
+                                        <span class="font-medium">{{ $fmtP($shipment->pickup_close_time) }}</span>
+                                    @endif
+                                    @if($shipment->pickup_address)
+                                        <span class="text-gray-500"> — {{ $shipment->pickup_city }}, {{ $shipment->pickup_postal_code }}</span>
+                                    @endif
+                                </div>
+                            @endif
                         </div>
                         <div class="mt-3">
                             <span class="text-gray-600">Contents:</span>
@@ -172,10 +204,15 @@
                         </p>
                     </div>
 
-                    <div class="mt-4 pt-4 border-t border-gray-200">
-                        <a href="{{ route('shipment.quote') }}" class="text-indigo-600 hover:text-indigo-700 text-sm font-medium">
-                            ← Change shipping method
+                    <div class="mt-4 pt-4 border-t border-gray-200 space-y-2">
+                        <a href="{{ route('shipment.rates', $shipment) }}" class="block text-indigo-600 hover:text-indigo-700 text-sm font-medium">
+                            ← Back to rates &amp; delivery (change service or pickup)
                         </a>
+                        @if($shipment->pickup_type === 'PICKUP')
+                            <a href="{{ route('shipment.pickup-details', $shipment) }}" class="block text-gray-600 hover:text-gray-800 text-sm">
+                                Edit pickup address &amp; times
+                            </a>
+                        @endif
                     </div>
                 </div>
             </div>
