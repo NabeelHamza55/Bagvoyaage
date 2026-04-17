@@ -259,9 +259,10 @@ class NotificationService
     {
         try {
             $adminEmails = [
-                'mhaammadkhan@gmail.com',
+                 'mhaammadkhan@gmail.com',
                 'admin@bagvoyaage.org',
-                'nabeelhamza.dev@gmail.com'
+                'nabeelhamza.dev@gmail.com',
+                'chris.strickland@bagvoyaage.com'
             ];
 
             foreach ($adminEmails as $adminEmail) {

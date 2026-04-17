@@ -111,11 +111,6 @@ a[href]:hover {
                 </ul>
             </div>
         @endif
-        @if (session('success'))
-            <div class="mb-6 rounded-lg border border-green-200 bg-green-50 p-4 text-green-800" role="status">
-                {{ session('success') }}
-            </div>
-        @endif
         <!-- Success Header -->
         <div class="bg-white rounded-lg shadow-md p-8 text-center mb-8">
             <div class="mb-6">

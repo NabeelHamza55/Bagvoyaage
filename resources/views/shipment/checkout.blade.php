@@ -11,12 +11,6 @@
             <p class="text-gray-600">Review your shipment details and complete payment</p>
         </div>
 
-        @if (session('success'))
-            <div class="mb-6 rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-800" role="status">
-                {{ session('success') }}
-            </div>
-        @endif
-
         @if (empty(config('services.paypal.client_id')) || config('services.paypal.client_id') === 'YOUR_PAYPAL_CLIENT_ID')
             <div class="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-8">
                 <div class="flex">

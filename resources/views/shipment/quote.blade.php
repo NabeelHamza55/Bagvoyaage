@@ -12,16 +12,6 @@
                 From: <span class="font-semibold">{{ $states[$shipment->origin_state] }}</span> →
                 To: <span class="font-semibold">{{ $states[$shipment->destination_state] }}</span>
             </p>
-            @if (session('success'))
-                <div class="mt-4 rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
-                    {{ session('success') }}
-                </div>
-            @endif
-            @if (session('error'))
-                <div class="mt-4 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900" role="alert">
-                    {{ session('error') }}
-                </div>
-            @endif
             @if ($errors->any())
                 <div class="mt-4 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800" role="alert">
                     <ul class="list-disc pl-5 space-y-0.5">

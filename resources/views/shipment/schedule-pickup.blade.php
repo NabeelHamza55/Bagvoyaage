@@ -5,12 +5,6 @@
 @section('content')
 <div class="py-12 bg-gray-50">
     <div class="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
-        @if (session('success'))
-            <div class="mb-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800" role="status">
-                {{ session('success') }}
-            </div>
-        @endif
-
         <div class="mb-6 overflow-hidden rounded-xl border-2 border-indigo-600 bg-indigo-600 shadow-lg">
             <div class="bg-indigo-50 px-5 py-4 sm:px-6 sm:py-5">
                 <p class="text-xs font-semibold uppercase tracking-wide text-indigo-700">FedEx Pickup Request API</p>
